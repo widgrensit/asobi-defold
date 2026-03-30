@@ -121,7 +121,7 @@ function M._handle_message(raw)
 		["match.finished"] = "on_match_finished",
 		["chat.message"] = "on_chat_message",
 		["notification.new"] = "on_notification",
-		["matchmaker.matched"] = "on_matchmaker_matched",
+		["match.matched"] = "on_matchmaker_matched",
 		["presence.changed"] = "on_presence_changed",
 		["error"] = "on_error",
 	}
