@@ -23,11 +23,20 @@ function M.put(client, path, body, callback)
 	end, M._headers(client), data)
 end
 
-function M.delete(client, path, callback)
+function M.delete(client, path, body_or_callback, callback)
 	local url = M._build_url(client, path)
+	local body, cb
+	if type(body_or_callback) == "function" then
+		cb = body_or_callback
+		body = nil
+	else
+		body = body_or_callback
+		cb = callback
+	end
+	local data = body and json.encode(body) or ""
 	http.request(url, "DELETE", function(self, id, response)
-		M._handle_response(response, callback)
-	end, M._headers(client))
+		M._handle_response(response, cb)
+	end, M._headers(client), data)
 end
 
 function M._headers(client)

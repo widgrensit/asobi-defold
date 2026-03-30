@@ -29,6 +29,32 @@ function M.login(client, username, password, callback)
 	end)
 end
 
+function M.oauth(client, provider, token, callback)
+	http_mod.post(client, "/api/v1/auth/oauth", {
+		provider = provider,
+		token = token,
+	}, function(data, err)
+		if not err and data then
+			client.session_token = data.session_token
+			client.player_id = data.player_id
+		end
+		if callback then callback(data, err) end
+	end)
+end
+
+function M.link_provider(client, provider, token, callback)
+	http_mod.post(client, "/api/v1/auth/link", {
+		provider = provider,
+		token = token,
+	}, callback)
+end
+
+function M.unlink_provider(client, provider, callback)
+	http_mod.delete(client, "/api/v1/auth/unlink", {
+		provider = provider,
+	}, callback)
+end
+
 function M.refresh(client, callback)
 	http_mod.post(client, "/api/v1/auth/refresh", {
 		session_token = client.session_token,
