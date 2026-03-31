@@ -7,7 +7,7 @@ function M.list(client, callback)
 end
 
 function M.mark_read(client, notification_id, callback)
-	http_mod.put(client, "/api/v1/notifications/" .. notification_id .. "/read", nil, callback)
+	http_mod.put(client, "/api/v1/notifications/" .. notification_id .. "/read", {}, callback)
 end
 
 function M.delete(client, notification_id, callback)

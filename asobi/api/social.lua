@@ -38,11 +38,11 @@ function M.get_group(client, group_id, callback)
 end
 
 function M.join_group(client, group_id, callback)
-	http_mod.post(client, "/api/v1/groups/" .. group_id .. "/join", nil, callback)
+	http_mod.post(client, "/api/v1/groups/" .. group_id .. "/join", {}, callback)
 end
 
 function M.leave_group(client, group_id, callback)
-	http_mod.post(client, "/api/v1/groups/" .. group_id .. "/leave", nil, callback)
+	http_mod.post(client, "/api/v1/groups/" .. group_id .. "/leave", {}, callback)
 end
 
 function M.get_chat_history(client, channel_id, callback)
