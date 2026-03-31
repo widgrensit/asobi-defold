@@ -50,9 +50,7 @@ function M.link_provider(client, provider, token, callback)
 end
 
 function M.unlink_provider(client, provider, callback)
-	http_mod.delete(client, "/api/v1/auth/unlink", {
-		provider = provider,
-	}, callback)
+	http_mod.delete(client, "/api/v1/auth/unlink?provider=" .. http_mod._urlencode(provider), callback)
 end
 
 function M.refresh(client, callback)
