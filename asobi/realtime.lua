@@ -9,6 +9,10 @@ M._callbacks = {
 	on_match_state = nil,
 	on_match_started = nil,
 	on_match_finished = nil,
+	on_vote_start = nil,
+	on_vote_tally = nil,
+	on_vote_result = nil,
+	on_vote_vetoed = nil,
 	on_chat_message = nil,
 	on_notification = nil,
 	on_matchmaker_matched = nil,
@@ -22,9 +26,7 @@ end
 
 function M.connect()
 	if M._connection then return end
-	local params = {
-		protocol = "json",
-	}
+	local params = {}
 	M._connection = websocket.connect(M._client.ws_url, params, function(self, conn, data)
 		if data.event == websocket.EVENT_CONNECTED then
 			M._send("session.connect", {token = M._client.session_token})
@@ -82,6 +84,14 @@ function M.leave_chat(channel_id)
 	M._send("chat.leave", {channel_id = channel_id})
 end
 
+function M.cast_vote(vote_id, option_id)
+	M._send("vote.cast", {vote_id = vote_id, option_id = option_id})
+end
+
+function M.cast_veto(vote_id)
+	M._send("vote.veto", {vote_id = vote_id})
+end
+
 function M.update_presence(status)
 	M._send("presence.update", {status = status or "online"})
 end
@@ -98,13 +108,13 @@ function M._send(msg_type, payload)
 	if not M._connection then return end
 	M._cid_counter = M._cid_counter + 1
 	local msg = json.encode({type = msg_type, payload = payload, cid = tostring(M._cid_counter)})
-	websocket.send(M._connection, msg)
+	websocket.send(M._connection, msg, {type = websocket.DATA_TYPE_TEXT})
 end
 
 function M._send_fire_and_forget(msg_type, payload)
 	if not M._connection then return end
 	local msg = json.encode({type = msg_type, payload = payload})
-	websocket.send(M._connection, msg)
+	websocket.send(M._connection, msg, {type = websocket.DATA_TYPE_TEXT})
 end
 
 function M._handle_message(raw)
@@ -119,6 +129,10 @@ function M._handle_message(raw)
 		["match.state"] = "on_match_state",
 		["match.started"] = "on_match_started",
 		["match.finished"] = "on_match_finished",
+		["match.vote_start"] = "on_vote_start",
+		["match.vote_tally"] = "on_vote_tally",
+		["match.vote_result"] = "on_vote_result",
+		["match.vote_vetoed"] = "on_vote_vetoed",
 		["chat.message"] = "on_chat_message",
 		["notification.new"] = "on_notification",
 		["match.matched"] = "on_matchmaker_matched",
