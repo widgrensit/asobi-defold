@@ -12,6 +12,7 @@ local tournaments = require("asobi.api.tournaments")
 local notifications = require("asobi.api.notifications")
 local storage = require("asobi.api.storage")
 local iap = require("asobi.api.iap")
+local votes = require("asobi.api.votes")
 
 local M = {}
 
@@ -46,6 +47,7 @@ function M.create(host, port, use_ssl)
 	client.notifications = notifications
 	client.storage = storage
 	client.iap = iap
+	client.votes = votes
 
 	realtime_mod.init(client)
 
