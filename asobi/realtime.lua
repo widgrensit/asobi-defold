@@ -85,11 +85,11 @@ function M.leave_chat(channel_id)
 end
 
 function M.cast_vote(vote_id, option_id)
-	M._send("match.vote_cast", {vote_id = vote_id, option_id = option_id})
+	M._send("vote.cast", {vote_id = vote_id, option_id = option_id})
 end
 
 function M.cast_veto(vote_id)
-	M._send("match.vote_veto", {vote_id = vote_id})
+	M._send("vote.veto", {vote_id = vote_id})
 end
 
 function M.update_presence(status)
