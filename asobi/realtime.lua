@@ -3,6 +3,7 @@ local M = {}
 M._client = nil
 M._connection = nil
 M._cid_counter = 0
+M._pending = {}
 M._callbacks = {
 	on_connected = nil,
 	on_disconnected = nil,
@@ -18,6 +19,8 @@ M._callbacks = {
 	on_matchmaker_matched = nil,
 	on_presence_changed = nil,
 	on_dm_message = nil,
+	on_world_list = nil,
+	on_world_joined = nil,
 	on_error = nil,
 }
 
@@ -105,6 +108,32 @@ function M.send_heartbeat()
 	M._send_fire_and_forget("session.heartbeat", {})
 end
 
+function M.list_worlds(mode, callback)
+	local payload = {}
+	if mode then payload.mode = mode end
+	M._send_with_callback("world.list", payload, callback)
+end
+
+function M.create_world(mode, callback)
+	M._send_with_callback("world.create", {mode = mode}, callback)
+end
+
+function M.join_world(world_id, callback)
+	M._send_with_callback("world.join", {world_id = world_id}, callback)
+end
+
+function M.find_or_create_world(mode, callback)
+	M._send_with_callback("world.find_or_create", {mode = mode}, callback)
+end
+
+function M.send_world_input(input)
+	M._send_fire_and_forget("world.input", input)
+end
+
+function M.leave_world()
+	M._send("world.leave", {})
+end
+
 function M.on(event, callback)
 	M._callbacks["on_" .. event] = callback
 end
@@ -113,6 +142,20 @@ function M._send(msg_type, payload)
 	if not M._connection then return end
 	M._cid_counter = M._cid_counter + 1
 	local msg = json.encode({type = msg_type, payload = payload, cid = tostring(M._cid_counter)})
+	websocket.send(M._connection, msg, {type = websocket.DATA_TYPE_TEXT})
+end
+
+function M._send_with_callback(msg_type, payload, callback)
+	if not M._connection then
+		if callback then callback(nil, "not connected") end
+		return
+	end
+	M._cid_counter = M._cid_counter + 1
+	local cid = tostring(M._cid_counter)
+	if callback then
+		M._pending[cid] = callback
+	end
+	local msg = json.encode({type = msg_type, payload = payload, cid = cid})
 	websocket.send(M._connection, msg, {type = websocket.DATA_TYPE_TEXT})
 end
 
@@ -128,6 +171,19 @@ function M._handle_message(raw)
 
 	local msg_type = msg.type or ""
 	local payload = msg.payload or {}
+	local cid = msg.cid
+
+	-- Check for pending request-response callbacks
+	if cid and M._pending[cid] then
+		local cb = M._pending[cid]
+		M._pending[cid] = nil
+		if msg_type == "error" then
+			cb(nil, payload.reason or "unknown error")
+		else
+			cb(payload, nil)
+		end
+		return
+	end
 
 	local handlers = {
 		["session.connected"] = "on_connected",
@@ -143,6 +199,9 @@ function M._handle_message(raw)
 		["match.matched"] = "on_matchmaker_matched",
 		["presence.changed"] = "on_presence_changed",
 		["dm.message"] = "on_dm_message",
+		["world.list"] = "on_world_list",
+		["world.joined"] = "on_world_joined",
+		["world.tick"] = "on_match_state",
 		["error"] = "on_error",
 	}
 
