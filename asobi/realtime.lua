@@ -17,6 +17,7 @@ M._callbacks = {
 	on_notification = nil,
 	on_matchmaker_matched = nil,
 	on_presence_changed = nil,
+	on_dm_message = nil,
 	on_error = nil,
 }
 
@@ -92,6 +93,10 @@ function M.cast_veto(vote_id)
 	M._send("vote.veto", {vote_id = vote_id})
 end
 
+function M.send_dm(recipient_id, content)
+	M._send("dm.send", {recipient_id = recipient_id, content = content})
+end
+
 function M.update_presence(status)
 	M._send("presence.update", {status = status or "online"})
 end
@@ -137,6 +142,7 @@ function M._handle_message(raw)
 		["notification.new"] = "on_notification",
 		["match.matched"] = "on_matchmaker_matched",
 		["presence.changed"] = "on_presence_changed",
+		["dm.message"] = "on_dm_message",
 		["error"] = "on_error",
 	}
 
