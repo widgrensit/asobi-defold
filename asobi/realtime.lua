@@ -21,6 +21,13 @@ M._callbacks = {
 	on_dm_message = nil,
 	on_world_list = nil,
 	on_world_joined = nil,
+	on_world_left = nil,
+	on_world_tick = nil,
+	on_phase_changed = nil,
+	on_world_finished = nil,
+	on_match_joined = nil,
+	on_match_left = nil,
+	on_matchmaker_queued = nil,
 	on_error = nil,
 }
 
@@ -68,8 +75,16 @@ function M.leave_match()
 	M._send("match.leave", {})
 end
 
-function M.add_to_matchmaker(mode)
-	M._send("matchmaker.add", {mode = mode or "default"})
+function M.add_to_matchmaker(opts)
+	local payload = {mode = "default"}
+	if type(opts) == "string" then
+		payload.mode = opts
+	elseif type(opts) == "table" then
+		payload.mode = opts.mode or "default"
+		if opts.properties then payload.properties = opts.properties end
+		if opts.party then payload.party = opts.party end
+	end
+	M._send("matchmaker.add", payload)
 end
 
 function M.remove_from_matchmaker(ticket_id)
@@ -108,9 +123,14 @@ function M.send_heartbeat()
 	M._send_fire_and_forget("session.heartbeat", {})
 end
 
-function M.list_worlds(mode, callback)
+function M.list_worlds(opts, callback)
 	local payload = {}
-	if mode then payload.mode = mode end
+	if type(opts) == "string" then
+		payload.mode = opts
+	elseif type(opts) == "table" then
+		if opts.mode then payload.mode = opts.mode end
+		if opts.has_capacity ~= nil then payload.has_capacity = opts.has_capacity end
+	end
 	M._send_with_callback("world.list", payload, callback)
 end
 
@@ -190,18 +210,22 @@ function M._handle_message(raw)
 		["match.state"] = "on_match_state",
 		["match.started"] = "on_match_started",
 		["match.finished"] = "on_match_finished",
+		["match.joined"] = "on_match_joined",
+		["match.left"] = "on_match_left",
 		["match.vote_start"] = "on_vote_start",
 		["match.vote_tally"] = "on_vote_tally",
 		["match.vote_result"] = "on_vote_result",
 		["match.vote_vetoed"] = "on_vote_vetoed",
 		["chat.message"] = "on_chat_message",
 		["notification.new"] = "on_notification",
-		["match.matched"] = "on_matchmaker_matched",
+		["matchmaker.queued"] = "on_matchmaker_queued",
+		["matchmaker.matched"] = "on_matchmaker_matched",
 		["presence.changed"] = "on_presence_changed",
 		["dm.message"] = "on_dm_message",
 		["world.list"] = "on_world_list",
 		["world.joined"] = "on_world_joined",
-		["world.tick"] = "on_match_state",
+		["world.left"] = "on_world_left",
+		["world.tick"] = "on_world_tick",
 		["world.phase_changed"] = "on_phase_changed",
 		["world.finished"] = "on_world_finished",
 		["error"] = "on_error",

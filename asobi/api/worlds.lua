@@ -2,9 +2,15 @@ local http_mod = require("asobi.http")
 
 local M = {}
 
-function M.list(client, mode, callback)
-	local query = nil
-	if mode then query = {mode = mode} end
+function M.list(client, opts, callback)
+	local query = {}
+	if type(opts) == "string" then
+		query.mode = opts
+	elseif type(opts) == "table" then
+		if opts.mode then query.mode = opts.mode end
+		if opts.has_capacity ~= nil then query.has_capacity = tostring(opts.has_capacity) end
+	end
+	if next(query) == nil then query = nil end
 	http_mod.get(client, "/api/v1/worlds", query, callback)
 end
 
