@@ -202,6 +202,8 @@ function M._handle_message(raw)
 		["world.list"] = "on_world_list",
 		["world.joined"] = "on_world_joined",
 		["world.tick"] = "on_match_state",
+		["world.phase_changed"] = "on_phase_changed",
+		["world.finished"] = "on_world_finished",
 		["error"] = "on_error",
 	}
 
