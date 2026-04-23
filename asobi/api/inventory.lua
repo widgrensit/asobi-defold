@@ -2,8 +2,10 @@ local http_mod = require("asobi.http")
 
 local M = {}
 
-function M.list(client, callback)
-	http_mod.get(client, "/api/v1/inventory", nil, callback)
+function M.list(client, limit, callback)
+	local query = nil
+	if limit then query = {limit = limit} end
+	http_mod.get(client, "/api/v1/inventory", query, callback)
 end
 
 function M.consume(client, item_id, quantity, callback)
