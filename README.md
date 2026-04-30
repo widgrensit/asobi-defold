@@ -41,6 +41,41 @@ function init(self)
 end
 ```
 
+## Multiplayer (entity sync)
+
+The SDK maintains a managed registry of all entities in your current
+world or match and applies the server's partial diffs for you. Game
+code listens to high-level callbacks instead of merging diffs by hand:
+
+```lua
+client.realtime.on("entity_added", function(id, state)
+    -- A new player or NPC joined; `state` is the full initial state.
+end)
+
+client.realtime.on("entity_updated", function(id, state, changed)
+    -- An entity moved or changed. `state` is the FULL merged state
+    -- (never partial); `changed` lists which fields the server diffed.
+end)
+
+client.realtime.on("entity_removed", function(id)
+    -- Despawn the ghost.
+end)
+
+-- Iterate or query:
+for id, state in pairs(client.realtime.entities) do
+    if id ~= client.realtime.local_player_id then
+        -- render ghost
+    end
+end
+```
+
+The SDK listens to both `world.tick` and `match.state` server frames
+internally, so it works the same in world-mode and match-mode games.
+You don't need to register on `on_world_tick` / `on_match_state`
+yourself unless you want the raw frame.
+
+See `example/multiplayer.lua` for a runnable starter.
+
 ## Features
 
 - **Auth** - Register, login, token refresh
