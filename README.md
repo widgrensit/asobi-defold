@@ -13,6 +13,56 @@ dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/main.zip
 
 ## Quick Start
 
+The SDK supports both world-mode (persistent shared rooms with zoned
+interest management) and match-mode (transient matchmade games). Pick
+the one that fits your game.
+
+### Worlds — drop two players into a shared room
+
+The simplest multiplayer pattern. One persistent world, both players
+walk around, both see each other.
+
+```lua
+local asobi = require("asobi.client")
+
+local client
+
+function init(self)
+    client = asobi.create("localhost", 8080)
+
+    client.auth.register(client, "player_" .. tostring(math.random(1, 1e9)),
+        "pass1234", nil, function(data, err)
+        if err then print("register failed: " .. err) return end
+
+        client.realtime.on("entity_added", function(id, state)
+            if id == client.realtime.local_player_id then return end
+            -- factory.create("#ghost_factory", vmath.vector3(state.x, state.y, 0))
+        end)
+
+        client.realtime.on("entity_updated", function(id, state, changed)
+            if id == client.realtime.local_player_id then return end
+            -- go.set_position(vmath.vector3(state.x, state.y, 0), ghosts[id])
+        end)
+
+        client.realtime.on("entity_removed", function(id)
+            -- go.delete(ghosts[id])
+        end)
+
+        client.realtime.connect()
+        client.realtime.find_or_create_world("walkers", function(payload, err)
+            if err then print("join failed: " .. err) return end
+            client.realtime.send_world_input({kind = "move", x = 500, y = 200})
+        end)
+    end)
+end
+```
+
+A complete runnable version is in `example/multiplayer.lua`. The asobi
+repo ships a matching server-side world script under
+[`examples/world-walkers/`](https://github.com/widgrensit/asobi/tree/main/examples/world-walkers).
+
+### Matchmaking — transient matchmade games
+
 ```lua
 local asobi = require("asobi.client")
 
@@ -23,14 +73,11 @@ function init(self)
 
     client.auth.login(client, "player1", "secret123", function(data, err)
         if err then return end
-        print("Logged in as: " .. data.username)
 
-        -- REST APIs
-        client.players.get_self(client, function(player, err)
-            print("Name: " .. player.display_name)
+        client.realtime.on("matchmaker_matched", function(payload)
+            client.realtime.join_match(payload.match_id)
         end)
 
-        -- Real-time
         client.realtime.on("match_state", function(payload)
             print("Tick: " .. tostring(payload.tick))
         end)
@@ -40,6 +87,8 @@ function init(self)
     end)
 end
 ```
+
+See `example/example.lua` for the matchmaker REST + realtime flow.
 
 ## Multiplayer (entity sync)
 
@@ -80,6 +129,7 @@ See `example/multiplayer.lua` for a runnable starter.
 
 - **Auth** - Register, login, token refresh
 - **Players** - Profiles, updates
+- **Worlds** - List, create, find-or-create, join, leave, input, entity sync
 - **Matchmaker** - Queue, status, cancel
 - **Matches** - List, details
 - **Leaderboards** - Top scores, around player, submit
@@ -89,7 +139,7 @@ See `example/multiplayer.lua` for a runnable starter.
 - **Tournaments** - List, join
 - **Notifications** - List, read, delete
 - **Storage** - Cloud saves, generic key-value
-- **Realtime** - WebSocket for matches, chat, presence, matchmaking
+- **Realtime** - WebSocket for worlds, matches, chat, presence, matchmaking
 
 ## License
 
