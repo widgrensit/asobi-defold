@@ -4,6 +4,13 @@ M._client = nil
 M._connection = nil
 M._cid_counter = 0
 M._pending = {}
+
+-- Managed entity registry. The SDK applies partial-diff merging from
+-- world.tick / match.state frames so games don't have to. Indexed by
+-- entity id; values are the latest known full state for that entity.
+M.entities = {}
+M.local_player_id = nil
+
 M._callbacks = {
 	on_connected = nil,
 	on_disconnected = nil,
@@ -30,6 +37,11 @@ M._callbacks = {
 	on_match_left = nil,
 	on_matchmaker_queued = nil,
 	on_error = nil,
+	-- High-level entity-sync callbacks (post-merge).
+	on_entity_added = nil,
+	on_entity_updated = nil,
+	on_entity_removed = nil,
+	on_tick = nil,
 }
 
 function M.init(client)
@@ -186,6 +198,69 @@ function M._send_fire_and_forget(msg_type, payload)
 	websocket.send(M._connection, msg, {type = websocket.DATA_TYPE_TEXT})
 end
 
+-- Applies one server update to the managed entity registry, returning
+-- {kind, id, state, changed_fields} so callers can fire callbacks. The
+-- server emits PARTIAL diffs on op="u" — only fields that changed —
+-- so we MUST merge against the last known state, not overwrite.
+function M._apply_entity_update(u)
+	local id = u.id
+	if not id then return nil end
+	local op = u.op
+	if op == "a" then
+		local state = {}
+		for k, v in pairs(u) do
+			if k ~= "op" and k ~= "id" then state[k] = v end
+		end
+		M.entities[id] = state
+		return {kind = "added", id = id, state = state}
+	elseif op == "u" then
+		local existing = M.entities[id]
+		if not existing then
+			-- Server sent an update for an entity we never saw added.
+			-- Treat as add when full enough; otherwise stash partial.
+			existing = {}
+			M.entities[id] = existing
+		end
+		local changed = {}
+		for k, v in pairs(u) do
+			if k ~= "op" and k ~= "id" then
+				if existing[k] ~= v then
+					existing[k] = v
+					changed[#changed + 1] = k
+				end
+			end
+		end
+		if #changed == 0 then return nil end
+		return {kind = "updated", id = id, state = existing, changed = changed}
+	elseif op == "r" then
+		M.entities[id] = nil
+		return {kind = "removed", id = id}
+	end
+	return nil
+end
+
+-- Processes a tick frame (world.tick or match.state). Applies all
+-- updates to the registry, fires per-entity callbacks, then fires
+-- on_tick once at the end so game code can do per-frame UI work.
+function M._dispatch_tick(payload)
+	local updates = payload and payload.updates or {}
+	for i = 1, #updates do
+		local change = M._apply_entity_update(updates[i])
+		if change then
+			if change.kind == "added" and M._callbacks.on_entity_added then
+				M._callbacks.on_entity_added(change.id, change.state)
+			elseif change.kind == "updated" and M._callbacks.on_entity_updated then
+				M._callbacks.on_entity_updated(change.id, change.state, change.changed)
+			elseif change.kind == "removed" and M._callbacks.on_entity_removed then
+				M._callbacks.on_entity_removed(change.id)
+			end
+		end
+	end
+	if M._callbacks.on_tick then
+		M._callbacks.on_tick(payload.tick, payload)
+	end
+end
+
 function M._handle_message(raw)
 	local msg = json.decode(raw)
 	if not msg then return end
@@ -204,6 +279,26 @@ function M._handle_message(raw)
 			cb(payload, nil)
 		end
 		return
+	end
+
+	-- Dispatch entity-sync frames through the managed registry.
+	-- Both message types carry the same {tick, updates} shape, but they
+	-- come from different game-mode paths (world vs match). Routing both
+	-- through the same merge keeps games independent of which one fires.
+	if msg_type == "world.tick" or msg_type == "match.state" then
+		M._dispatch_tick(payload)
+	end
+
+	-- Capture local_player_id so games can identify "self" without
+	-- threading it through their own state.
+	if msg_type == "session.connected" and payload.player_id then
+		M.local_player_id = payload.player_id
+	end
+
+	-- Reset the entity registry on world transitions so stale ghosts
+	-- don't survive a re-join into a fresh zone.
+	if msg_type == "world.joined" or msg_type == "world.left" then
+		M.entities = {}
 	end
 
 	local handlers = {
