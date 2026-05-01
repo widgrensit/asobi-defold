@@ -15,7 +15,7 @@ json = {encode = function() return "" end, decode = function() return {} end}
 http = {request = function() end}
 hash = function(s) return s end
 
-local M = require("asobi.realtime")
+local realtime = require("asobi.realtime")
 
 local failures = 0
 local function check(cond, msg)
@@ -25,29 +25,24 @@ local function check(cond, msg)
 	end
 end
 
--- Reset the registry between tests.
-local function reset()
-	M.entities = {}
-	M._callbacks.on_entity_added = nil
-	M._callbacks.on_entity_updated = nil
-	M._callbacks.on_entity_removed = nil
-	M._callbacks.on_tick = nil
+local function new_rt()
+	return realtime.new({ws_url = "ws://stub", session_token = ""})
 end
 
 -- ------------------------------------------------------------------
 -- Test 1: op="a" populates the entity with full state and fires added.
 -- ------------------------------------------------------------------
 do
-	reset()
+	local rt = new_rt()
 	local seen
-	M.on("entity_added", function(id, state) seen = {id = id, state = state} end)
-	M._dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20, type = "player"}}})
+	rt:on("entity_added", function(id, state) seen = {id = id, state = state} end)
+	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20, type = "player"}}})
 
 	check(seen ~= nil, "entity_added callback fired on op='a'")
 	check(seen.id == "p1", "entity_added id matches")
 	check(seen.state.x == 10 and seen.state.y == 20 and seen.state.type == "player",
 		"entity_added carries full state")
-	check(M.entities["p1"].x == 10, "registry has full state after add")
+	check(rt.entities["p1"].x == 10, "registry has full state after add")
 end
 
 -- ------------------------------------------------------------------
@@ -55,11 +50,11 @@ end
 -- that broke barrow_defold ghosts when peer_manager defaulted y to 0).
 -- ------------------------------------------------------------------
 do
-	reset()
-	M._dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20, type = "player"}}})
+	local rt = new_rt()
+	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20, type = "player"}}})
 	local seen
-	M.on("entity_updated", function(id, state, changed) seen = {id = id, state = state, changed = changed} end)
-	M._dispatch_tick({tick = 2, updates = {{op = "u", id = "p1", x = 50}}})
+	rt:on("entity_updated", function(id, state, changed) seen = {id = id, state = state, changed = changed} end)
+	rt:_dispatch_tick({tick = 2, updates = {{op = "u", id = "p1", x = 50}}})
 
 	check(seen ~= nil, "entity_updated callback fired")
 	check(seen.state.x == 50, "x updated to new value")
@@ -72,11 +67,11 @@ end
 -- Test 3: op="u" with no actual change is a no-op (no callback).
 -- ------------------------------------------------------------------
 do
-	reset()
-	M._dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20}}})
+	local rt = new_rt()
+	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20}}})
 	local fired = false
-	M.on("entity_updated", function() fired = true end)
-	M._dispatch_tick({tick = 2, updates = {{op = "u", id = "p1", x = 10}}})
+	rt:on("entity_updated", function() fired = true end)
+	rt:_dispatch_tick({tick = 2, updates = {{op = "u", id = "p1", x = 10}}})
 	check(not fired, "entity_updated does NOT fire when value is unchanged")
 end
 
@@ -84,23 +79,23 @@ end
 -- Test 4: op="r" removes entity and fires entity_removed.
 -- ------------------------------------------------------------------
 do
-	reset()
-	M._dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20}}})
+	local rt = new_rt()
+	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20}}})
 	local removed_id
-	M.on("entity_removed", function(id) removed_id = id end)
-	M._dispatch_tick({tick = 2, updates = {{op = "r", id = "p1"}}})
+	rt:on("entity_removed", function(id) removed_id = id end)
+	rt:_dispatch_tick({tick = 2, updates = {{op = "r", id = "p1"}}})
 	check(removed_id == "p1", "entity_removed callback fires with id")
-	check(M.entities["p1"] == nil, "entity gone from registry")
+	check(rt.entities["p1"] == nil, "entity gone from registry")
 end
 
 -- ------------------------------------------------------------------
 -- Test 5: on_tick fires once per dispatch with tick number.
 -- ------------------------------------------------------------------
 do
-	reset()
+	local rt = new_rt()
 	local tick_seen
-	M.on("tick", function(tick) tick_seen = tick end)
-	M._dispatch_tick({tick = 42, updates = {{op = "a", id = "p1", x = 1, y = 2}}})
+	rt:on("tick", function(tick) tick_seen = tick end)
+	rt:_dispatch_tick({tick = 42, updates = {{op = "a", id = "p1", x = 1, y = 2}}})
 	check(tick_seen == 42, "on_tick fires with tick number")
 end
 
@@ -108,17 +103,41 @@ end
 -- Test 6: multiple updates in one tick all get merged.
 -- ------------------------------------------------------------------
 do
-	reset()
+	local rt = new_rt()
 	local fired = 0
-	M.on("entity_added", function() fired = fired + 1 end)
-	M._dispatch_tick({tick = 1, updates = {
+	rt:on("entity_added", function() fired = fired + 1 end)
+	rt:_dispatch_tick({tick = 1, updates = {
 		{op = "a", id = "p1", x = 1, y = 2},
 		{op = "a", id = "p2", x = 3, y = 4},
 		{op = "a", id = "p3", x = 5, y = 6},
 	}})
 	check(fired == 3, "added fires once per new entity in batch")
-	check(M.entities["p1"].x == 1 and M.entities["p2"].x == 3 and M.entities["p3"].x == 5,
+	check(rt.entities["p1"].x == 1 and rt.entities["p2"].x == 3 and rt.entities["p3"].x == 5,
 		"all entities present in registry")
+end
+
+-- ------------------------------------------------------------------
+-- Test 7: two realtime instances have independent state (no cross-talk).
+-- This is the regression test for asobi-defold issue #17.
+-- ------------------------------------------------------------------
+do
+	local rt_a = new_rt()
+	local rt_b = new_rt()
+	local seen_a, seen_b = 0, 0
+	rt_a:on("entity_added", function() seen_a = seen_a + 1 end)
+	rt_b:on("entity_added", function() seen_b = seen_b + 1 end)
+	rt_a:_dispatch_tick({tick = 1, updates = {{op = "a", id = "pa", x = 1, y = 1}}})
+	check(seen_a == 1 and seen_b == 0, "rt_a tick does not leak into rt_b")
+	rt_b:_dispatch_tick({tick = 1, updates = {
+		{op = "a", id = "pb1", x = 2, y = 2},
+		{op = "a", id = "pb2", x = 3, y = 3},
+	}})
+	check(seen_a == 1, "rt_a callback count unaffected by rt_b dispatch")
+	check(seen_b == 2, "rt_b sees its own two entity_added")
+	check(rt_a.entities["pa"] ~= nil and rt_a.entities["pb1"] == nil,
+		"rt_a registry isolated from rt_b")
+	check(rt_b.entities["pb1"] ~= nil and rt_b.entities["pa"] == nil,
+		"rt_b registry isolated from rt_a")
 end
 
 -- ------------------------------------------------------------------

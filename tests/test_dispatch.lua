@@ -192,15 +192,12 @@ local function read_file(path)
 	return s
 end
 
--- Realtime is module-style with package-level state; reset between tests
--- by clearing callbacks + entities rather than re-requiring (simpler and
--- mirrors how test_entity_sync.lua does it).
-local M = require("asobi.realtime")
+-- Realtime is per-instance; spin up a fresh one per fixture so callbacks
+-- and entity registries don't leak between assertions.
+local realtime = require("asobi.realtime")
 
-local function reset()
-	M.entities = {}
-	M.local_player_id = nil
-	for k, _ in pairs(M._callbacks) do M._callbacks[k] = nil end
+local function new_rt()
+	return realtime.new({ws_url = "ws://stub", session_token = ""})
 end
 
 local fixtures = list_fixtures()
@@ -230,10 +227,10 @@ for _, name in ipairs(fixtures) do
 		if not raw then
 			fail("could not read " .. name)
 		else
-			reset()
+			local rt = new_rt()
 			local fired = false
-			M.on(expected_cb, function(_payload) fired = true end)
-			M._handle_message(raw)
+			rt:on(expected_cb, function(_payload) fired = true end)
+			rt:_handle_message(raw)
 			if fired then
 				pass(mtype .. " -> on(" .. expected_cb .. ")")
 			else

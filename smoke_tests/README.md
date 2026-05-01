@@ -39,12 +39,11 @@ The prebuilt `dmengine_headless` is **not** used: the headless variant strips `h
 
 The engine exits 0 on `[smoke] PASS`, non-zero on failure or timeout. Bundling needs network access to Defold's build server (`build.defold.com`) for the websocket extension; it usually completes in 10-15 seconds.
 
-## Scope: single-client subset
+## Scope: full 2-client SMOKE.md flow
 
-The `asobi.realtime` module currently uses module-level state, so two distinct clients cannot coexist in the same Lua VM. Until that's refactored, this smoke runs the **single-client subset** of [SMOKE.md](https://github.com/widgrensit/sdk_demo_backend/blob/main/SMOKE.md):
+Runs the canonical [SMOKE.md](https://github.com/widgrensit/sdk_demo_backend/blob/main/SMOKE.md) flow with two clients in the same Lua VM:
 
-- `POST /api/v1/auth/register` (Scenario 1, step 1)
-- `/ws` connect + `session.connected` event (Scenario 1, steps 2-3)
-- `matchmaker.add` → `matchmaker.queued` round-trip (proves outbound WS messages reach the server and inbound dispatch works)
-
-The full 2-player matchmaker → `match.matched` → `match.input` → `match.state` flow needs an SDK refactor (per-instance `realtime`) before it can run here.
+- `POST /api/v1/auth/register` for two distinct players (Scenario 1, step 1)
+- Both `/ws` connect + `session.connected` (Scenario 1, steps 2-3)
+- Both `matchmaker.add` → `match.matched` with the same `match_id` (Scenario 2)
+- Client A sees `match.state`, sends `match.input {move_x=1}`, and confirms its own `x` advances past `x_initial + 10` (Scenario 3)
