@@ -17,6 +17,9 @@ jobs:
       - name: Run entity-sync unit tests
         run: lua5.4 tests/test_entity_sync.lua
 
+      - name: Run dispatch unit tests (asobi protocol fixture corpus)
+        run: lua5.4 tests/test_dispatch.lua
+
   smoke:
     runs-on: ubuntu-24.04
     steps:
