@@ -16,3 +16,48 @@ jobs:
 
       - name: Run entity-sync unit tests
         run: lua5.4 tests/test_entity_sync.lua
+
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+
+      - name: Lua syntax check (smoke.lua)
+        run: luac5.4 -p smoke_tests/smoke.lua
+
+      - name: Bring up sdk_demo_backend
+        run: |
+          git clone https://github.com/widgrensit/sdk_demo_backend
+          cd sdk_demo_backend && docker compose up -d
+
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              -H 'Content-Type: application/json' \
+              -d '{"username":"_ping","password":"x","display_name":"x"}' \
+              http://localhost:8084/api/v1/auth/register || echo 000)
+            # Any non-5xx response means the backend is up.
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then
+              echo "backend reachable (HTTP $code)"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend never came up"; exit 1
+
+      # The Defold smoke test (smoke_tests/smoke.lua) can only run inside
+      # the Defold engine (uses `http.request` and `defold-websocket`),
+      # so it is not exercised here. The backend bring-up + syntax check
+      # is the closest smoke parity available in headless CI. See
+      # smoke_tests/README.md for local-run instructions.
+
+      - name: Backend logs on failure
+        if: failure()
+        run: cd sdk_demo_backend && docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: cd sdk_demo_backend && docker compose down -v

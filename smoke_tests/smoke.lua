@@ -1,20 +1,21 @@
--- Smoke test for asobi-defold against asobi-test-harness.
+-- Smoke test for asobi-defold against widgrensit/sdk_demo_backend.
 --
 -- This file is Defold-engine-specific (uses `http.request`,
 -- `websocket` via the asobi SDK). Run it inside a minimal Defold
 -- project; see smoke_tests/README.md for the setup.
 --
--- Exercises the 3 canonical scenarios against the harness (see
--- widgrensit/asobi-test-harness for the contract).
+-- Exercises the 3 canonical scenarios against sdk_demo_backend (see
+-- widgrensit/sdk_demo_backend/SMOKE.md for the contract).
 
 local asobi = require("asobi.client")
 local realtime = require("asobi.realtime")
 
 local M = {}
 
-local MATCH_MODE = "smoke"
+local MATCH_MODE = "demo"
 local MATCH_TIMEOUT = 10.0
 local STATE_TIMEOUT = 3.0
+local X_DELTA = 10
 
 local state = nil  -- per-player state, re-initialised in M.run
 
@@ -44,7 +45,8 @@ function M.run(host, port, done_callback)
 		b = nil,
 		match_a = nil,
 		match_b = nil,
-		my_x = -1,
+		x_initial = nil,
+		input_sent = false,
 		done = false,
 		ok = false,
 		started_at = socket.gettime(),
@@ -101,19 +103,32 @@ function M._connect_and_queue()
 	-- Register match.matched handlers BEFORE queueing.
 	state.a.realtime.on("match_matched", function(payload)
 		state.match_a = payload
-		M._maybe_input_phase()
+		M._maybe_check_match()
 	end)
 	state.b.realtime.on("match_matched", function(payload)
 		state.match_b = payload
-		M._maybe_input_phase()
+		M._maybe_check_match()
 	end)
 
 	state.a.realtime.on("match_state", function(payload)
 		if state.match_a == nil then return end
 		local me = (payload.players or {})[state.a.player_id]
-		if me and (me.x or 0) >= 1 and state.my_x < 0 then
-			state.my_x = me.x
-			log("match.state confirmed: x = " .. tostring(me.x))
+		if not me or me.x == nil then return end
+
+		if state.x_initial == nil then
+			-- Scenario 3 step 2: capture x from the FIRST observed match.state.
+			state.x_initial = me.x
+			log("match.state initial: x_initial = " .. tostring(me.x))
+			M._send_input()
+			return
+		end
+
+		-- Scenario 3 step 4: assert subsequent state shows x advanced.
+		if not state.input_sent then return end
+		if me.x > state.x_initial + X_DELTA then
+			log("match.state confirmed: x = " .. tostring(me.x)
+				.. " (initial " .. tostring(state.x_initial)
+				.. ", delta > " .. tostring(X_DELTA) .. ")")
 			pass()
 		end
 	end)
@@ -131,16 +146,24 @@ function M._maybe_queue(connected_a, connected_b)
 	state.b.realtime.add_to_matchmaker({ mode = MATCH_MODE })
 end
 
-function M._maybe_input_phase()
+function M._maybe_check_match()
 	if state.match_a == nil or state.match_b == nil then return end
-	if state.input_sent then return end
-	state.input_sent = true
+	if state.match_checked then return end
+	state.match_checked = true
 	if state.match_a.match_id ~= state.match_b.match_id then
 		fail("match_id mismatch: " .. tostring(state.match_a.match_id)
 			.. " vs " .. tostring(state.match_b.match_id))
 		return
 	end
 	log("Both matched, match_id = " .. state.match_a.match_id)
+	-- Do NOT send input yet. Wait for the first match.state so we can
+	-- capture x_initial against the random spawn x in [50, 700].
+end
+
+function M._send_input()
+	if state.input_sent then return end
+	state.input_sent = true
+	log("Sending match.input {move_x=1, move_y=0}")
 	state.a.realtime.send_match_input({ move_x = 1, move_y = 0 })
 end
 
@@ -150,8 +173,9 @@ function M.update()
 	local elapsed = socket.gettime() - state.started_at
 	if elapsed > MATCH_TIMEOUT + STATE_TIMEOUT + 5 then
 		if state.match_a == nil then fail("timeout waiting for match.matched")
-		elseif state.my_x < 0 then fail("timeout waiting for match.state with input applied")
-		else fail("timeout (unknown phase)")
+		elseif state.x_initial == nil then fail("timeout waiting for first match.state")
+		else fail("timeout waiting for match.state with input applied (x_initial="
+			.. tostring(state.x_initial) .. ")")
 		end
 	end
 	if state.done and state.done_callback then
