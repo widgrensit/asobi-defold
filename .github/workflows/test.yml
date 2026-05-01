@@ -95,6 +95,11 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      # The Linux Defold engine binary dynamically links against OpenAL
+      # (sound) which isn't preinstalled on ubuntu-24.04 runners.
+      - name: Install Defold runtime deps
+        run: sudo apt-get update && sudo apt-get install -y libopenal1
+
       - name: Download bob.jar (pinned)
         run: |
           curl -fSL -o bob.jar \
