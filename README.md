@@ -88,7 +88,7 @@ function init(self)
         -- match.matched (matchmaker push) and match.joined (reply to a
         -- client-initiated match.join) both signal "in a match — match.state
         -- will follow." Subscribe to both to cover matchmade and direct flows.
-        client.realtime.on("matchmaker_matched", function(payload)
+        client.realtime.on("match_matched", function(payload)
             client.realtime.join_match(payload.match_id)
         end)
 

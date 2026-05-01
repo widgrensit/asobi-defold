@@ -14,17 +14,27 @@ M.local_player_id = nil
 M._callbacks = {
 	on_connected = nil,
 	on_disconnected = nil,
+	on_heartbeat = nil,
 	on_match_state = nil,
-	on_match_started = nil,
+	on_match_matched = nil,
 	on_match_finished = nil,
+	on_matchmaker_expired = nil,
+	on_matchmaker_failed = nil,
 	on_vote_start = nil,
 	on_vote_tally = nil,
 	on_vote_result = nil,
 	on_vote_vetoed = nil,
+	on_vote_cast_ok = nil,
+	on_vote_veto_ok = nil,
+	on_chat_joined = nil,
+	on_chat_left = nil,
 	on_chat_message = nil,
 	on_notification = nil,
-	on_matchmaker_matched = nil,
+	on_matchmaker_queued = nil,
+	on_matchmaker_removed = nil,
+	on_matchmaker_matched = nil,  -- DEPRECATED alias of on_match_matched; remove next minor.
 	on_presence_changed = nil,
+	on_dm_sent = nil,
 	on_dm_message = nil,
 	on_world_list = nil,
 	on_world_joined = nil,
@@ -35,7 +45,6 @@ M._callbacks = {
 	on_world_finished = nil,
 	on_match_joined = nil,
 	on_match_left = nil,
-	on_matchmaker_queued = nil,
 	on_error = nil,
 	-- High-level entity-sync callbacks (post-merge).
 	on_entity_added = nil,
@@ -301,36 +310,56 @@ function M._handle_message(raw)
 		M.entities = {}
 	end
 
+	-- Server wire `type` -> SDK callback name. Must stay in sync with
+	-- the asobi protocol fixture corpus (see tests/fixtures/) — the
+	-- dispatch test in tests/test_dispatch.lua loads every fixture and
+	-- asserts the matching callback fires.
 	local handlers = {
+		["error"] = "on_error",
 		["session.connected"] = "on_connected",
+		["session.heartbeat"] = "on_heartbeat",
 		["match.state"] = "on_match_state",
-		["match.started"] = "on_match_started",
-		["match.finished"] = "on_match_finished",
+		["match.matched"] = "on_match_matched",
 		["match.joined"] = "on_match_joined",
 		["match.left"] = "on_match_left",
+		["match.finished"] = "on_match_finished",
+		["match.matchmaker_expired"] = "on_matchmaker_expired",
+		["match.matchmaker_failed"] = "on_matchmaker_failed",
 		["match.vote_start"] = "on_vote_start",
 		["match.vote_tally"] = "on_vote_tally",
 		["match.vote_result"] = "on_vote_result",
 		["match.vote_vetoed"] = "on_vote_vetoed",
-		["chat.message"] = "on_chat_message",
-		["notification.new"] = "on_notification",
 		["matchmaker.queued"] = "on_matchmaker_queued",
-		["matchmaker.matched"] = "on_matchmaker_matched",
-		["presence.updated"] = "on_presence_changed",
+		["matchmaker.removed"] = "on_matchmaker_removed",
+		["chat.joined"] = "on_chat_joined",
+		["chat.left"] = "on_chat_left",
+		["chat.message"] = "on_chat_message",
+		["dm.sent"] = "on_dm_sent",
 		["dm.message"] = "on_dm_message",
+		["presence.updated"] = "on_presence_changed",
+		["notification.new"] = "on_notification",
+		["vote.cast_ok"] = "on_vote_cast_ok",
+		["vote.veto_ok"] = "on_vote_veto_ok",
+		["world.tick"] = "on_world_tick",
+		["world.terrain"] = "on_world_terrain",
 		["world.list"] = "on_world_list",
 		["world.joined"] = "on_world_joined",
 		["world.left"] = "on_world_left",
-		["world.tick"] = "on_world_tick",
-		["world.terrain"] = "on_world_terrain",
 		["world.phase_changed"] = "on_phase_changed",
 		["world.finished"] = "on_world_finished",
-		["error"] = "on_error",
 	}
 
 	local handler_name = handlers[msg_type]
 	if handler_name and M._callbacks[handler_name] then
 		M._callbacks[handler_name](payload)
+	end
+
+	-- DEPRECATED: `on_matchmaker_matched` is an alias kept for one
+	-- minor version. The server emits `match.matched`, never
+	-- `matchmaker.matched`. Older docs/examples advertised the
+	-- matchmaker name; new code should bind `match_matched` instead.
+	if msg_type == "match.matched" and M._callbacks.on_matchmaker_matched then
+		M._callbacks.on_matchmaker_matched(payload)
 	end
 end
 

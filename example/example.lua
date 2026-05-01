@@ -28,7 +28,7 @@ function init(self)
 		end)
 
 		-- Connect realtime
-		client.realtime.on("matchmaker_matched", function(payload)
+		client.realtime.on("match_matched", function(payload)
 			print("Match found: " .. payload.match_id)
 			client.realtime.join_match(payload.match_id)
 		end)
