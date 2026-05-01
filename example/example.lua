@@ -3,7 +3,7 @@ local asobi = require("asobi.client")
 local client
 
 function init(self)
-	client = asobi.create("localhost", 8080)
+	client = asobi.create("localhost", 8084)
 
 	-- Login
 	client.auth.login(client, "player1", "secret123", function(data, err)

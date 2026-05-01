@@ -20,7 +20,7 @@ Unlike the other SDKs in the fleet, Defold's SDK uses engine-only APIs (`http.re
    local smoke = require("smoke_tests.smoke")
 
    function init(self)
-       smoke.run("localhost", 8080, function(ok)
+       smoke.run("localhost", 8084, function(ok)
            if ok then
                print("smoke: PASS")
                sys.exit(0)
