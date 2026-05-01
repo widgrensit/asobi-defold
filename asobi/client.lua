@@ -19,7 +19,7 @@ local dm = require("asobi.api.dm")
 local M = {}
 
 function M.create(host, port, use_ssl)
-	port = port or 8080
+	port = port or 8084
 	use_ssl = use_ssl or false
 
 	local scheme = use_ssl and "https" or "http"

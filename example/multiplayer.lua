@@ -8,7 +8,7 @@ local client
 local ghosts = {}  -- id -> game object url for remote players
 
 function init(self)
-	client = asobi.create("localhost", 8090)
+	client = asobi.create("localhost", 8084)
 
 	client.auth.register(client, "player_" .. tostring(math.random(1, 1e9)),
 		"pass1234", nil, function(data, err)
