@@ -95,10 +95,15 @@ jobs:
           distribution: temurin
           java-version: "25"
 
-      # The Linux Defold engine binary dynamically links against OpenAL
-      # (sound) which isn't preinstalled on ubuntu-24.04 runners.
+      # The Linux Defold engine binary dynamically links against OpenAL,
+      # X11/Xext/Xi, and GL/GLU. Most aren't preinstalled on ubuntu-24.04.
+      # The smoke never opens a window, but the loader still resolves
+      # every NEEDED entry at startup.
       - name: Install Defold runtime deps
-        run: sudo apt-get update && sudo apt-get install -y libopenal1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libopenal1 libxext6 libx11-6 libxi6 libgl1 libglu1-mesa
 
       - name: Download bob.jar (pinned)
         run: |
