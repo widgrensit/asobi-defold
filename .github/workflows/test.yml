@@ -95,15 +95,14 @@ jobs:
           distribution: temurin
           java-version: "25"
 
-      # The Linux Defold engine binary dynamically links against OpenAL,
-      # X11/Xext/Xi, and GL/GLU. Most aren't preinstalled on ubuntu-24.04.
-      # The smoke never opens a window, but the loader still resolves
-      # every NEEDED entry at startup.
+      # The Linux Defold engine binary links against OpenAL, X11, and
+      # GL/GLU, and GLFW expects a real (or virtual) display at startup
+      # even when the project never draws. xvfb provides one.
       - name: Install Defold runtime deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libopenal1 libxext6 libx11-6 libxi6 libgl1 libglu1-mesa
+            libopenal1 libxext6 libx11-6 libxi6 libgl1 libglu1-mesa xvfb
 
       - name: Download bob.jar (pinned)
         run: |
@@ -149,9 +148,12 @@ jobs:
           ASOBI_URL: http://localhost:8084
         run: |
           set -o pipefail
-          # 90s wall-clock cap as a safety net; the script's own timeout
-          # is 10s and a successful run resolves in well under 5s.
-          timeout 90 ./dist/asobi/asobi.x86_64 2>&1 | tee smoke.log
+          # xvfb-run gives GLFW a display to attach to; the engine never
+          # actually paints since the smoke exits before the first frame
+          # render is meaningful. 90s wall-clock cap as a safety net;
+          # the script's own timeout is 10s and a successful run resolves
+          # in well under 5s.
+          xvfb-run -a timeout 90 ./dist/asobi/asobi.x86_64 2>&1 | tee smoke.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             echo "engine smoke failed with status $status"
