@@ -1,0 +1,11 @@
+# Defold build artifacts
+/build/
+/dist/
+/.internal/
+/manifest.private.der
+/manifest.public.der
+
+# Tooling fetched into the workspace by CI/local runs
+/bob.jar
+/dmengine
+/dmengine_headless

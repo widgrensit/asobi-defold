@@ -51,11 +51,11 @@ jobs:
           done
           echo "backend never came up"; exit 1
 
-      # The Defold smoke test (smoke_tests/smoke.lua) can only run inside
-      # the Defold engine (uses `http.request` and `defold-websocket`),
-      # so it is not exercised here. The backend bring-up + syntax check
-      # is the closest smoke parity available in headless CI. See
-      # smoke_tests/README.md for local-run instructions.
+      # The Defold smoke test (smoke_tests/smoke.lua) cannot run in plain
+      # Lua (uses `http.request` and the `defold-websocket` extension). The
+      # `engine-smoke` job below drives the same script inside a real
+      # Defold engine bundle. This job keeps the cheap syntax check +
+      # backend bring-up parity check.
 
       - name: Backend logs on failure
         if: failure()
@@ -64,3 +64,108 @@ jobs:
       - name: Tear down
         if: always()
         run: cd sdk_demo_backend && docker compose down -v
+
+  # End-to-end smoke against sdk_demo_backend, run inside a real Defold
+  # engine. Drives smoke_tests/smoke.lua via a `bob.jar bundle` so the
+  # SDK's HTTP client and the `defold-websocket` native extension are
+  # exercised exactly as a game would use them.
+  #
+  # Why bundle and not `dmengine_headless`? The prebuilt
+  # `dmengine_headless` strips `http.request` from the runtime, so the
+  # SDK's REST layer can't run there. The bundled engine includes both
+  # `http.request` and the linked `defold-websocket` extension. Bundling
+  # uses Defold's hosted build server (https://build.defold.com) — no
+  # local C toolchain required.
+  #
+  # The Defold version is pinned in env. Bumps are deliberate.
+  engine-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Pinned Defold stable release.
+      # https://github.com/defold/defold/releases/tag/1.12.3
+      DEFOLD_VERSION: "1.12.3"
+    steps:
+      - uses: actions/checkout@v4
+
+      # bob.jar 1.12.3 is compiled with Java 25 (class file version 69),
+      # so an older JDK fails to load it.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      # The Linux Defold engine binary links against OpenAL, X11, and
+      # GL/GLU, and GLFW expects a real (or virtual) display at startup
+      # even when the project never draws. xvfb provides one.
+      - name: Install Defold runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libopenal1 libxext6 libx11-6 libxi6 libgl1 libglu1-mesa xvfb
+
+      - name: Download bob.jar (pinned)
+        run: |
+          curl -fSL -o bob.jar \
+            "https://github.com/defold/defold/releases/download/${DEFOLD_VERSION}/bob.jar"
+          java -jar bob.jar --version
+
+      - name: Bring up sdk_demo_backend
+        run: |
+          git clone --depth 1 https://github.com/widgrensit/sdk_demo_backend
+          cd sdk_demo_backend && docker compose up -d
+
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              -H 'Content-Type: application/json' \
+              -d '{"username":"_ping","password":"x","display_name":"x"}' \
+              http://localhost:8084/api/v1/auth/register || echo 000)
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then
+              echo "backend reachable (HTTP $code)"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend never came up"; exit 1
+
+      - name: Resolve Defold dependencies (extension-websocket)
+        run: java -jar bob.jar --root . resolve
+
+      # Debug variant keeps `print` / `DEBUG:SCRIPT` log output enabled,
+      # which the smoke relies on for its [smoke] PASS / FAIL lines.
+      - name: Bundle Defold project (links defold-websocket via build server)
+        run: |
+          java -jar bob.jar --root . \
+            --platform x86_64-linux \
+            --variant debug \
+            --archive \
+            --bundle-output dist \
+            build bundle
+
+      - name: Run engine smoke
+        env:
+          ASOBI_URL: http://localhost:8084
+        run: |
+          set -o pipefail
+          # xvfb-run gives GLFW a display to attach to; the engine never
+          # actually paints since the smoke exits before the first frame
+          # render is meaningful. 90s wall-clock cap as a safety net;
+          # the script's own timeout is 10s and a successful run resolves
+          # in well under 5s.
+          xvfb-run -a timeout 90 ./dist/asobi/asobi.x86_64 2>&1 | tee smoke.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "engine smoke failed with status $status"
+            exit "$status"
+          fi
+          # Belt-and-braces: also assert the explicit PASS line.
+          grep -F "[smoke] PASS" smoke.log
+
+      - name: Backend logs on failure
+        if: failure()
+        run: cd sdk_demo_backend && docker compose logs --no-color || true
+
+      - name: Tear down
+        if: always()
+        run: cd sdk_demo_backend && docker compose down -v || true
