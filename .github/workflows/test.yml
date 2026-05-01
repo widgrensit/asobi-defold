@@ -88,10 +88,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # bob.jar 1.12.3 is compiled with Java 25 (class file version 69),
+      # so an older JDK fails to load it.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
 
       - name: Download bob.jar (pinned)
         run: |
