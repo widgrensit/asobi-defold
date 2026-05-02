@@ -47,24 +47,24 @@ function init(self)
         "pass1234", nil, function(data, err)
         if err then print("register failed: " .. err) return end
 
-        client.realtime.on("entity_added", function(id, state)
+        client.realtime:on("entity_added", function(id, state)
             if id == client.realtime.local_player_id then return end
             -- factory.create("#ghost_factory", vmath.vector3(state.x, state.y, 0))
         end)
 
-        client.realtime.on("entity_updated", function(id, state, changed)
+        client.realtime:on("entity_updated", function(id, state, changed)
             if id == client.realtime.local_player_id then return end
             -- go.set_position(vmath.vector3(state.x, state.y, 0), ghosts[id])
         end)
 
-        client.realtime.on("entity_removed", function(id)
+        client.realtime:on("entity_removed", function(id)
             -- go.delete(ghosts[id])
         end)
 
-        client.realtime.connect()
-        client.realtime.find_or_create_world("walkers", function(payload, err)
+        client.realtime:connect()
+        client.realtime:find_or_create_world("walkers", function(payload, err)
             if err then print("join failed: " .. err) return end
-            client.realtime.send_world_input({kind = "move", x = 500, y = 200})
+            client.realtime:send_world_input({kind = "move", x = 500, y = 200})
         end)
     end)
 end
@@ -88,16 +88,16 @@ function init(self)
         -- match.matched (matchmaker push) and match.joined (reply to a
         -- client-initiated match.join) both signal "in a match — match.state
         -- will follow." Subscribe to both to cover matchmade and direct flows.
-        client.realtime.on("match_matched", function(payload)
-            client.realtime.join_match(payload.match_id)
+        client.realtime:on("match_matched", function(payload)
+            client.realtime:join_match(payload.match_id)
         end)
 
-        client.realtime.on("match_state", function(payload)
+        client.realtime:on("match_state", function(payload)
             print("Tick: " .. tostring(payload.tick))
         end)
 
-        client.realtime.connect()
-        client.realtime.add_to_matchmaker("demo")
+        client.realtime:connect()
+        client.realtime:add_to_matchmaker("demo")
     end)
 end
 ```
@@ -109,16 +109,16 @@ See `example/example.lua` for the matchmaker REST + realtime flow.
 The SDK maintains a managed registry of all entities in your current world or match and applies the server's partial diffs for you. Game code listens to high-level callbacks instead of merging diffs by hand:
 
 ```lua
-client.realtime.on("entity_added", function(id, state)
+client.realtime:on("entity_added", function(id, state)
     -- A new player or NPC joined; `state` is the full initial state.
 end)
 
-client.realtime.on("entity_updated", function(id, state, changed)
+client.realtime:on("entity_updated", function(id, state, changed)
     -- An entity moved or changed. `state` is the FULL merged state
     -- (never partial); `changed` lists which fields the server diffed.
 end)
 
-client.realtime.on("entity_removed", function(id)
+client.realtime:on("entity_removed", function(id)
     -- Despawn the ghost.
 end)
 

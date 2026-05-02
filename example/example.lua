@@ -28,16 +28,16 @@ function init(self)
 		end)
 
 		-- Connect realtime
-		client.realtime.on("match_matched", function(payload)
+		client.realtime:on("match_matched", function(payload)
 			print("Match found: " .. payload.match_id)
-			client.realtime.join_match(payload.match_id)
+			client.realtime:join_match(payload.match_id)
 		end)
 
-		client.realtime.on("match_state", function(payload)
+		client.realtime:on("match_state", function(payload)
 			print("Tick: " .. tostring(payload.tick))
 		end)
 
-		client.realtime.connect()
-		client.realtime.add_to_matchmaker("arena")
+		client.realtime:connect()
+		client.realtime:add_to_matchmaker("arena")
 	end)
 end

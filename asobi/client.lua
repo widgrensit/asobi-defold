@@ -36,7 +36,6 @@ function M.create(host, port, use_ssl)
 	}
 
 	client.http = http_mod
-	client.realtime = realtime_mod
 	client.auth = auth
 	client.players = players
 	client.matchmaker = matchmaker
@@ -53,7 +52,7 @@ function M.create(host, port, use_ssl)
 	client.worlds = worlds
 	client.dm = dm
 
-	realtime_mod.init(client)
+	client.realtime = realtime_mod.new(client)
 
 	return client
 end
