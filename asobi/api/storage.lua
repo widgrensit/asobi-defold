@@ -11,14 +11,15 @@ function M.get_save(client, slot, callback)
 end
 
 function M.put_save(client, slot, data, version, callback)
-	local body = {data = data}
-	if version then body.version = version end
+	local body = { data = data }
+	if version then
+		body.version = version
+	end
 	http_mod.put(client, "/api/v1/saves/" .. slot, body, callback)
 end
 
 function M.list_storage(client, collection, limit, callback)
-	http_mod.get(client, "/api/v1/storage/" .. collection,
-		{limit = limit or 50}, callback)
+	http_mod.get(client, "/api/v1/storage/" .. collection, { limit = limit or 50 }, callback)
 end
 
 function M.get_storage(client, collection, key, callback)

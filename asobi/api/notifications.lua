@@ -5,10 +5,16 @@ local M = {}
 function M.list(client, opts, callback)
 	local query = {}
 	if opts then
-		if opts.read ~= nil then query.read = tostring(opts.read) end
-		if opts.limit then query.limit = opts.limit end
+		if opts.read ~= nil then
+			query.read = tostring(opts.read)
+		end
+		if opts.limit then
+			query.limit = opts.limit
+		end
 	end
-	if next(query) == nil then query = nil end
+	if next(query) == nil then
+		query = nil
+	end
 	http_mod.get(client, "/api/v1/notifications", query, callback)
 end
 

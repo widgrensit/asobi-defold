@@ -2,7 +2,7 @@ local M = {}
 
 function M.get(client, path, query, callback)
 	local url = M._build_url(client, path, query)
-	http.request(url, "GET", function(self, id, response)
+	http.request(url, "GET", function(_self, _id, response)
 		M._handle_response(response, callback)
 	end, M._headers(client))
 end
@@ -10,7 +10,7 @@ end
 function M.post(client, path, body, callback)
 	local url = M._build_url(client, path)
 	local data = json.encode(body or {})
-	http.request(url, "POST", function(self, id, response)
+	http.request(url, "POST", function(_self, _id, response)
 		M._handle_response(response, callback)
 	end, M._headers(client), data)
 end
@@ -18,7 +18,7 @@ end
 function M.put(client, path, body, callback)
 	local url = M._build_url(client, path)
 	local data = json.encode(body or {})
-	http.request(url, "PUT", function(self, id, response)
+	http.request(url, "PUT", function(_self, _id, response)
 		M._handle_response(response, callback)
 	end, M._headers(client), data)
 end
@@ -34,13 +34,13 @@ function M.delete(client, path, body_or_callback, callback)
 		cb = callback
 	end
 	local data = body and json.encode(body) or ""
-	http.request(url, "DELETE", function(self, id, response)
+	http.request(url, "DELETE", function(_self, _id, response)
 		M._handle_response(response, cb)
 	end, M._headers(client), data)
 end
 
 function M._headers(client)
-	local h = {["Content-Type"] = "application/json"}
+	local h = { ["Content-Type"] = "application/json" }
 	if client.session_token and client.session_token ~= "" then
 		h["Authorization"] = "Bearer " .. client.session_token
 	end
@@ -70,7 +70,9 @@ function M._build_url(client, path, query)
 end
 
 function M._handle_response(response, callback)
-	if not callback then return end
+	if not callback then
+		return
+	end
 	local body = {}
 	if response.response and response.response ~= "" then
 		body = json.decode(response.response)
@@ -78,7 +80,7 @@ function M._handle_response(response, callback)
 	if response.status >= 400 then
 		callback(nil, {
 			status_code = response.status,
-			error = body and body.error or ("HTTP " .. response.status)
+			error = body and body.error or ("HTTP " .. response.status),
 		})
 	else
 		callback(body, nil)

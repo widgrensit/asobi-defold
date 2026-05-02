@@ -9,3 +9,6 @@
 /bob.jar
 /dmengine
 /dmengine_headless
+
+# Per-user Claude Code state
+/.claude/

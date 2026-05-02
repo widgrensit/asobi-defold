@@ -12,7 +12,7 @@ dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v0
 dependencies#1 = https://github.com/defold/extension-websocket/archive/master.zip
 ```
 
-Then *Project → Fetch Libraries* in the Defold editor. Pin to a tag — `main` is unstable. See [releases](https://github.com/widgrensit/asobi-defold/releases) for available versions.
+Then *Project → Fetch Libraries* in the Defold editor. Pin to a tag - `main` is unstable. See [releases](https://github.com/widgrensit/asobi-defold/releases) for available versions.
 
 ## Run a backend first
 
@@ -29,9 +29,9 @@ That serves at `http://localhost:8084` (HTTP + WebSocket on `/ws`) with a 2-play
 
 The SDK supports both world-mode (persistent shared rooms with zoned interest management) and match-mode (transient matchmade games). Pick the one that fits your game.
 
-> **Defold-specific**: register WebSocket callbacks from a `.script` in `main.collection` (a script that lives for the whole app). Don't register them from a `gui_script` or any collection that gets unloaded — Defold invalidates the WS callback when its owning script is gone.
+> **Defold-specific**: register WebSocket callbacks from a `.script` in `main.collection` (a script that lives for the whole app). Don't register them from a `gui_script` or any collection that gets unloaded - Defold invalidates the WS callback when its owning script is gone.
 
-### Worlds — drop two players into a shared room
+### Worlds - drop two players into a shared room
 
 The simplest multiplayer pattern. One persistent world, both players walk around, both see each other.
 
@@ -72,7 +72,7 @@ end
 
 A complete runnable version is in `example/multiplayer.lua`.
 
-### Matchmaking — transient matchmade games
+### Matchmaking - transient matchmade games
 
 ```lua
 local asobi = require("asobi.client")
@@ -86,7 +86,7 @@ function init(self)
         if err then return end
 
         -- match.matched (matchmaker push) and match.joined (reply to a
-        -- client-initiated match.join) both signal "in a match — match.state
+        -- client-initiated match.join) both signal "in a match - match.state
         -- will follow." Subscribe to both to cover matchmade and direct flows.
         client.realtime:on("match_matched", function(payload)
             client.realtime:join_match(payload.match_id)

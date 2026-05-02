@@ -12,7 +12,9 @@ function M.register(client, username, password, display_name, callback)
 			client.session_token = data.session_token
 			client.player_id = data.player_id
 		end
-		if callback then callback(data, err) end
+		if callback then
+			callback(data, err)
+		end
 	end)
 end
 
@@ -25,7 +27,9 @@ function M.login(client, username, password, callback)
 			client.session_token = data.session_token
 			client.player_id = data.player_id
 		end
-		if callback then callback(data, err) end
+		if callback then
+			callback(data, err)
+		end
 	end)
 end
 
@@ -38,7 +42,9 @@ function M.oauth(client, provider, token, callback)
 			client.session_token = data.session_token
 			client.player_id = data.player_id
 		end
-		if callback then callback(data, err) end
+		if callback then
+			callback(data, err)
+		end
 	end)
 end
 
@@ -60,7 +66,9 @@ function M.refresh(client, callback)
 		if not err and data then
 			client.session_token = data.session_token
 		end
-		if callback then callback(data, err) end
+		if callback then
+			callback(data, err)
+		end
 	end)
 end
 

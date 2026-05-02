@@ -8,12 +8,30 @@
 package.path = package.path .. ";./?.lua;./asobi/?.lua"
 
 -- Defold stubs the realtime module references at module scope.
-websocket = {connect = function() return {} end, send = function() end,
-	disconnect = function() end, EVENT_CONNECTED = 1, EVENT_DISCONNECTED = 2,
-	EVENT_MESSAGE = 3, EVENT_ERROR = 4, DATA_TYPE_TEXT = "text"}
-json = {encode = function() return "" end, decode = function() return {} end}
-http = {request = function() end}
-hash = function(s) return s end
+websocket = {
+	connect = function()
+		return {}
+	end,
+	send = function() end,
+	disconnect = function() end,
+	EVENT_CONNECTED = 1,
+	EVENT_DISCONNECTED = 2,
+	EVENT_MESSAGE = 3,
+	EVENT_ERROR = 4,
+	DATA_TYPE_TEXT = "text",
+}
+json = {
+	encode = function()
+		return ""
+	end,
+	decode = function()
+		return {}
+	end,
+}
+http = { request = function() end }
+hash = function(s)
+	return s
+end
 
 local realtime = require("asobi.realtime")
 
@@ -26,7 +44,7 @@ local function check(cond, msg)
 end
 
 local function new_rt()
-	return realtime.new({ws_url = "ws://stub", session_token = ""})
+	return realtime.new({ ws_url = "ws://stub", session_token = "" })
 end
 
 -- ------------------------------------------------------------------
@@ -35,13 +53,20 @@ end
 do
 	local rt = new_rt()
 	local seen
-	rt:on("entity_added", function(id, state) seen = {id = id, state = state} end)
-	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20, type = "player"}}})
+	rt:on("entity_added", function(id, state)
+		seen = { id = id, state = state }
+	end)
+	rt:_dispatch_tick({
+		tick = 1,
+		updates = { { op = "a", id = "p1", x = 10, y = 20, type = "player" } },
+	})
 
 	check(seen ~= nil, "entity_added callback fired on op='a'")
 	check(seen.id == "p1", "entity_added id matches")
-	check(seen.state.x == 10 and seen.state.y == 20 and seen.state.type == "player",
-		"entity_added carries full state")
+	check(
+		seen.state.x == 10 and seen.state.y == 20 and seen.state.type == "player",
+		"entity_added carries full state"
+	)
 	check(rt.entities["p1"].x == 10, "registry has full state after add")
 end
 
@@ -51,10 +76,15 @@ end
 -- ------------------------------------------------------------------
 do
 	local rt = new_rt()
-	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20, type = "player"}}})
+	rt:_dispatch_tick({
+		tick = 1,
+		updates = { { op = "a", id = "p1", x = 10, y = 20, type = "player" } },
+	})
 	local seen
-	rt:on("entity_updated", function(id, state, changed) seen = {id = id, state = state, changed = changed} end)
-	rt:_dispatch_tick({tick = 2, updates = {{op = "u", id = "p1", x = 50}}})
+	rt:on("entity_updated", function(id, state, changed)
+		seen = { id = id, state = state, changed = changed }
+	end)
+	rt:_dispatch_tick({ tick = 2, updates = { { op = "u", id = "p1", x = 50 } } })
 
 	check(seen ~= nil, "entity_updated callback fired")
 	check(seen.state.x == 50, "x updated to new value")
@@ -68,10 +98,12 @@ end
 -- ------------------------------------------------------------------
 do
 	local rt = new_rt()
-	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20}}})
+	rt:_dispatch_tick({ tick = 1, updates = { { op = "a", id = "p1", x = 10, y = 20 } } })
 	local fired = false
-	rt:on("entity_updated", function() fired = true end)
-	rt:_dispatch_tick({tick = 2, updates = {{op = "u", id = "p1", x = 10}}})
+	rt:on("entity_updated", function()
+		fired = true
+	end)
+	rt:_dispatch_tick({ tick = 2, updates = { { op = "u", id = "p1", x = 10 } } })
 	check(not fired, "entity_updated does NOT fire when value is unchanged")
 end
 
@@ -80,10 +112,12 @@ end
 -- ------------------------------------------------------------------
 do
 	local rt = new_rt()
-	rt:_dispatch_tick({tick = 1, updates = {{op = "a", id = "p1", x = 10, y = 20}}})
+	rt:_dispatch_tick({ tick = 1, updates = { { op = "a", id = "p1", x = 10, y = 20 } } })
 	local removed_id
-	rt:on("entity_removed", function(id) removed_id = id end)
-	rt:_dispatch_tick({tick = 2, updates = {{op = "r", id = "p1"}}})
+	rt:on("entity_removed", function(id)
+		removed_id = id
+	end)
+	rt:_dispatch_tick({ tick = 2, updates = { { op = "r", id = "p1" } } })
 	check(removed_id == "p1", "entity_removed callback fires with id")
 	check(rt.entities["p1"] == nil, "entity gone from registry")
 end
@@ -94,8 +128,10 @@ end
 do
 	local rt = new_rt()
 	local tick_seen
-	rt:on("tick", function(tick) tick_seen = tick end)
-	rt:_dispatch_tick({tick = 42, updates = {{op = "a", id = "p1", x = 1, y = 2}}})
+	rt:on("tick", function(tick)
+		tick_seen = tick
+	end)
+	rt:_dispatch_tick({ tick = 42, updates = { { op = "a", id = "p1", x = 1, y = 2 } } })
 	check(tick_seen == 42, "on_tick fires with tick number")
 end
 
@@ -105,15 +141,22 @@ end
 do
 	local rt = new_rt()
 	local fired = 0
-	rt:on("entity_added", function() fired = fired + 1 end)
-	rt:_dispatch_tick({tick = 1, updates = {
-		{op = "a", id = "p1", x = 1, y = 2},
-		{op = "a", id = "p2", x = 3, y = 4},
-		{op = "a", id = "p3", x = 5, y = 6},
-	}})
+	rt:on("entity_added", function()
+		fired = fired + 1
+	end)
+	rt:_dispatch_tick({
+		tick = 1,
+		updates = {
+			{ op = "a", id = "p1", x = 1, y = 2 },
+			{ op = "a", id = "p2", x = 3, y = 4 },
+			{ op = "a", id = "p3", x = 5, y = 6 },
+		},
+	})
 	check(fired == 3, "added fires once per new entity in batch")
-	check(rt.entities["p1"].x == 1 and rt.entities["p2"].x == 3 and rt.entities["p3"].x == 5,
-		"all entities present in registry")
+	check(
+		rt.entities["p1"].x == 1 and rt.entities["p2"].x == 3 and rt.entities["p3"].x == 5,
+		"all entities present in registry"
+	)
 end
 
 -- ------------------------------------------------------------------
@@ -124,20 +167,31 @@ do
 	local rt_a = new_rt()
 	local rt_b = new_rt()
 	local seen_a, seen_b = 0, 0
-	rt_a:on("entity_added", function() seen_a = seen_a + 1 end)
-	rt_b:on("entity_added", function() seen_b = seen_b + 1 end)
-	rt_a:_dispatch_tick({tick = 1, updates = {{op = "a", id = "pa", x = 1, y = 1}}})
+	rt_a:on("entity_added", function()
+		seen_a = seen_a + 1
+	end)
+	rt_b:on("entity_added", function()
+		seen_b = seen_b + 1
+	end)
+	rt_a:_dispatch_tick({ tick = 1, updates = { { op = "a", id = "pa", x = 1, y = 1 } } })
 	check(seen_a == 1 and seen_b == 0, "rt_a tick does not leak into rt_b")
-	rt_b:_dispatch_tick({tick = 1, updates = {
-		{op = "a", id = "pb1", x = 2, y = 2},
-		{op = "a", id = "pb2", x = 3, y = 3},
-	}})
+	rt_b:_dispatch_tick({
+		tick = 1,
+		updates = {
+			{ op = "a", id = "pb1", x = 2, y = 2 },
+			{ op = "a", id = "pb2", x = 3, y = 3 },
+		},
+	})
 	check(seen_a == 1, "rt_a callback count unaffected by rt_b dispatch")
 	check(seen_b == 2, "rt_b sees its own two entity_added")
-	check(rt_a.entities["pa"] ~= nil and rt_a.entities["pb1"] == nil,
-		"rt_a registry isolated from rt_b")
-	check(rt_b.entities["pb1"] ~= nil and rt_b.entities["pa"] == nil,
-		"rt_b registry isolated from rt_a")
+	check(
+		rt_a.entities["pa"] ~= nil and rt_a.entities["pb1"] == nil,
+		"rt_a registry isolated from rt_b"
+	)
+	check(
+		rt_b.entities["pb1"] ~= nil and rt_b.entities["pa"] == nil,
+		"rt_b registry isolated from rt_a"
+	)
 end
 
 -- ------------------------------------------------------------------

@@ -29,7 +29,9 @@ local function log(msg)
 end
 
 local function fail(msg)
-	if state.done then return end
+	if state.done then
+		return
+	end
 	print("[smoke] FAIL: " .. tostring(msg))
 	state.done = true
 	state.ok = false
@@ -49,8 +51,12 @@ local function maybe_check_matched()
 	if state.match_a and state.match_b and not state.match_checked then
 		state.match_checked = true
 		if state.match_a.match_id ~= state.match_b.match_id then
-			fail("match_id mismatch: " .. tostring(state.match_a.match_id)
-				.. " vs " .. tostring(state.match_b.match_id))
+			fail(
+				"match_id mismatch: "
+					.. tostring(state.match_a.match_id)
+					.. " vs "
+					.. tostring(state.match_b.match_id)
+			)
 			return
 		end
 		log("Both matched, match_id = " .. tostring(state.match_a.match_id))
@@ -98,12 +104,18 @@ function M.run(host, port, done_callback)
 
 	log("Registering A: " .. user_a)
 	a.auth.register(a, user_a, "smoke_pw_12345", user_a, function(data, err)
-		if err then fail("register A: " .. tostring(err.error or err)); return end
+		if err then
+			fail("register A: " .. tostring(err.error or err))
+			return
+		end
 		log("Registered A, player_id=" .. tostring(data.player_id))
 
 		log("Registering B: " .. user_b)
 		b.auth.register(b, user_b, "smoke_pw_12345", user_b, function(data2, err2)
-			if err2 then fail("register B: " .. tostring(err2.error or err2)); return end
+			if err2 then
+				fail("register B: " .. tostring(err2.error or err2))
+				return
+			end
 			log("Registered B, player_id=" .. tostring(data2.player_id))
 			M._connect_both()
 		end)
@@ -114,37 +126,51 @@ function M._connect_both()
 	local a = state.client_a
 	local b = state.client_b
 
-	wire_handlers(a, "A", function(p) state.match_a = p end)
-	wire_handlers(b, "B", function(p) state.match_b = p end)
+	wire_handlers(a, "A", function(p)
+		state.match_a = p
+	end)
+	wire_handlers(b, "B", function(p)
+		state.match_b = p
+	end)
 
 	a.realtime:on("connected", function(payload)
 		log("A session.connected, player_id=" .. tostring(payload.player_id))
-		a.realtime:add_to_matchmaker({mode = MATCH_MODE})
+		a.realtime:add_to_matchmaker({ mode = MATCH_MODE })
 		log("A queued (mode=" .. MATCH_MODE .. ")")
 	end)
 
 	b.realtime:on("connected", function(payload)
 		log("B session.connected, player_id=" .. tostring(payload.player_id))
-		b.realtime:add_to_matchmaker({mode = MATCH_MODE})
+		b.realtime:add_to_matchmaker({ mode = MATCH_MODE })
 		log("B queued (mode=" .. MATCH_MODE .. ")")
 	end)
 
 	a.realtime:on("match_state", function(payload)
-		if not state.match_checked then return end
+		if not state.match_checked then
+			return
+		end
 		local me = (payload.players or {})[a.player_id]
-		if not me or me.x == nil then return end
+		if not me or me.x == nil then
+			return
+		end
 		if state.x_initial == nil then
 			state.x_initial = me.x
 			log("A first match.state: x_initial = " .. tostring(state.x_initial))
 			log("A sending match.input {move_x=1, move_y=0}")
-			a.realtime:send_match_input({move_x = 1, move_y = 0, shoot = false, aim_x = 0, aim_y = 0})
+			a.realtime:send_match_input({ move_x = 1, move_y = 0, shoot = false, aim_x = 0, aim_y = 0 })
 			state.input_sent = true
 			return
 		end
 		if state.input_sent and me.x > state.x_initial + X_DELTA then
-			log("A match.state confirmed: x = " .. tostring(me.x)
-				.. " (initial " .. tostring(state.x_initial)
-				.. ", delta > " .. X_DELTA .. ")")
+			log(
+				"A match.state confirmed: x = "
+					.. tostring(me.x)
+					.. " (initial "
+					.. tostring(state.x_initial)
+					.. ", delta > "
+					.. X_DELTA
+					.. ")"
+			)
 			pass()
 		end
 	end)
@@ -156,7 +182,9 @@ end
 --- Call from main.script on_update to enforce timeouts and fire the
 --- done_callback once the run resolves.
 function M.update()
-	if state == nil then return end
+	if state == nil then
+		return
+	end
 	if not state.done then
 		local elapsed = socket.gettime() - state.started_at
 		if elapsed > OVERALL_TIMEOUT then
@@ -165,8 +193,7 @@ function M.update()
 			elseif state.x_initial == nil then
 				fail("timeout waiting for first match.state")
 			else
-				fail("timeout waiting for x to advance (x_initial="
-					.. tostring(state.x_initial) .. ")")
+				fail("timeout waiting for x to advance (x_initial=" .. tostring(state.x_initial) .. ")")
 			end
 		end
 	end

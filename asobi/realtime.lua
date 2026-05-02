@@ -2,7 +2,7 @@ local M = {}
 M.__index = M
 
 -- Server wire `type` -> SDK callback name. Must stay in sync with the
--- asobi protocol fixture corpus (see tests/fixtures/) — the dispatch
+-- asobi protocol fixture corpus (see tests/fixtures/) - the dispatch
 -- test in tests/test_dispatch.lua loads every fixture and asserts the
 -- matching callback fires.
 local SERVER_EVENTS = {
@@ -40,6 +40,21 @@ local SERVER_EVENTS = {
 	["world.finished"] = "world_finished",
 }
 
+-- All event names a user can register a callback for. Union of the SDK
+-- callback names in SERVER_EVENTS plus the connection lifecycle and
+-- entity-sync events the SDK fires itself. Validated at register time
+-- so typos surface immediately instead of silently never firing.
+local KNOWN_EVENTS = {
+	disconnected = true,
+	entity_added = true,
+	entity_updated = true,
+	entity_removed = true,
+	tick = true,
+}
+for _, cb_name in pairs(SERVER_EVENTS) do
+	KNOWN_EVENTS[cb_name] = true
+end
+
 function M.new(client)
 	return setmetatable({
 		client = client,
@@ -53,27 +68,32 @@ function M.new(client)
 end
 
 function M:on(event, callback)
+	assert(KNOWN_EVENTS[event], "asobi.realtime: unknown event '" .. tostring(event) .. "'")
 	self.callbacks[event] = callback
 end
 
 local function fire(self, event, ...)
 	local cb = self.callbacks[event]
-	if cb then cb(...) end
+	if cb then
+		cb(...)
+	end
 end
 
 function M:connect()
-	if self.connection then return end
+	if self.connection then
+		return
+	end
 	local params = {}
-	self.connection = websocket.connect(self.client.ws_url, params, function(_self, conn, data)
+	self.connection = websocket.connect(self.client.ws_url, params, function(_self, _conn, data)
 		if data.event == websocket.EVENT_CONNECTED then
-			self:_send("session.connect", {token = self.client.session_token})
+			self:_send("session.connect", { token = self.client.session_token })
 		elseif data.event == websocket.EVENT_DISCONNECTED then
 			self.connection = nil
 			fire(self, "disconnected", data.message or "closed")
 		elseif data.event == websocket.EVENT_MESSAGE then
 			self:_handle_message(data.message)
 		elseif data.event == websocket.EVENT_ERROR then
-			fire(self, "error", {error = data.message})
+			fire(self, "error", { error = data.message })
 		end
 	end)
 end
@@ -86,7 +106,7 @@ function M:disconnect()
 end
 
 function M:join_match(match_id)
-	self:_send("match.join", {match_id = match_id})
+	self:_send("match.join", { match_id = match_id })
 end
 
 function M:send_match_input(input)
@@ -98,47 +118,51 @@ function M:leave_match()
 end
 
 function M:add_to_matchmaker(opts)
-	local payload = {mode = "default"}
+	local payload = { mode = "default" }
 	if type(opts) == "string" then
 		payload.mode = opts
 	elseif type(opts) == "table" then
 		payload.mode = opts.mode or "default"
-		if opts.properties then payload.properties = opts.properties end
-		if opts.party then payload.party = opts.party end
+		if opts.properties then
+			payload.properties = opts.properties
+		end
+		if opts.party then
+			payload.party = opts.party
+		end
 	end
 	self:_send("matchmaker.add", payload)
 end
 
 function M:remove_from_matchmaker(ticket_id)
-	self:_send("matchmaker.remove", {ticket_id = ticket_id})
+	self:_send("matchmaker.remove", { ticket_id = ticket_id })
 end
 
 function M:join_chat(channel_id)
-	self:_send("chat.join", {channel_id = channel_id})
+	self:_send("chat.join", { channel_id = channel_id })
 end
 
 function M:send_chat_message(channel_id, content)
-	self:_send_fire_and_forget("chat.send", {channel_id = channel_id, content = content})
+	self:_send_fire_and_forget("chat.send", { channel_id = channel_id, content = content })
 end
 
 function M:leave_chat(channel_id)
-	self:_send("chat.leave", {channel_id = channel_id})
+	self:_send("chat.leave", { channel_id = channel_id })
 end
 
 function M:cast_vote(vote_id, option_id)
-	self:_send("vote.cast", {vote_id = vote_id, option_id = option_id})
+	self:_send("vote.cast", { vote_id = vote_id, option_id = option_id })
 end
 
 function M:cast_veto(vote_id)
-	self:_send("vote.veto", {vote_id = vote_id})
+	self:_send("vote.veto", { vote_id = vote_id })
 end
 
 function M:send_dm(recipient_id, content)
-	self:_send("dm.send", {recipient_id = recipient_id, content = content})
+	self:_send("dm.send", { recipient_id = recipient_id, content = content })
 end
 
 function M:update_presence(status)
-	self:_send("presence.update", {status = status or "online"})
+	self:_send("presence.update", { status = status or "online" })
 end
 
 function M:send_heartbeat()
@@ -150,22 +174,26 @@ function M:list_worlds(opts, callback)
 	if type(opts) == "string" then
 		payload.mode = opts
 	elseif type(opts) == "table" then
-		if opts.mode then payload.mode = opts.mode end
-		if opts.has_capacity ~= nil then payload.has_capacity = opts.has_capacity end
+		if opts.mode then
+			payload.mode = opts.mode
+		end
+		if opts.has_capacity ~= nil then
+			payload.has_capacity = opts.has_capacity
+		end
 	end
 	self:_send_with_callback("world.list", payload, callback)
 end
 
 function M:create_world(mode, callback)
-	self:_send_with_callback("world.create", {mode = mode}, callback)
+	self:_send_with_callback("world.create", { mode = mode }, callback)
 end
 
 function M:join_world(world_id, callback)
-	self:_send_with_callback("world.join", {world_id = world_id}, callback)
+	self:_send_with_callback("world.join", { world_id = world_id }, callback)
 end
 
 function M:find_or_create_world(mode, callback)
-	self:_send_with_callback("world.find_or_create", {mode = mode}, callback)
+	self:_send_with_callback("world.find_or_create", { mode = mode }, callback)
 end
 
 function M:send_world_input(input)
@@ -177,15 +205,19 @@ function M:leave_world()
 end
 
 function M:_send(msg_type, payload)
-	if not self.connection then return end
+	if not self.connection then
+		return
+	end
 	self.cid_counter = self.cid_counter + 1
-	local msg = json.encode({type = msg_type, payload = payload, cid = tostring(self.cid_counter)})
-	websocket.send(self.connection, msg, {type = websocket.DATA_TYPE_TEXT})
+	local msg = json.encode({ type = msg_type, payload = payload, cid = tostring(self.cid_counter) })
+	websocket.send(self.connection, msg, { type = websocket.DATA_TYPE_TEXT })
 end
 
 function M:_send_with_callback(msg_type, payload, callback)
 	if not self.connection then
-		if callback then callback(nil, "not connected") end
+		if callback then
+			callback(nil, "not connected")
+		end
 		return
 	end
 	self.cid_counter = self.cid_counter + 1
@@ -193,31 +225,37 @@ function M:_send_with_callback(msg_type, payload, callback)
 	if callback then
 		self.pending[cid] = callback
 	end
-	local msg = json.encode({type = msg_type, payload = payload, cid = cid})
-	websocket.send(self.connection, msg, {type = websocket.DATA_TYPE_TEXT})
+	local msg = json.encode({ type = msg_type, payload = payload, cid = cid })
+	websocket.send(self.connection, msg, { type = websocket.DATA_TYPE_TEXT })
 end
 
 function M:_send_fire_and_forget(msg_type, payload)
-	if not self.connection then return end
-	local msg = json.encode({type = msg_type, payload = payload})
-	websocket.send(self.connection, msg, {type = websocket.DATA_TYPE_TEXT})
+	if not self.connection then
+		return
+	end
+	local msg = json.encode({ type = msg_type, payload = payload })
+	websocket.send(self.connection, msg, { type = websocket.DATA_TYPE_TEXT })
 end
 
 -- Applies one server update to the managed entity registry, returning
 -- {kind, id, state, changed_fields} so callers can fire callbacks. The
--- server emits PARTIAL diffs on op="u" — only fields that changed —
+-- server emits PARTIAL diffs on op="u" - only fields that changed -
 -- so we MUST merge against the last known state, not overwrite.
 function M:_apply_entity_update(u)
 	local id = u.id
-	if not id then return nil end
+	if not id then
+		return nil
+	end
 	local op = u.op
 	if op == "a" then
 		local state = {}
 		for k, v in pairs(u) do
-			if k ~= "op" and k ~= "id" then state[k] = v end
+			if k ~= "op" and k ~= "id" then
+				state[k] = v
+			end
 		end
 		self.entities[id] = state
-		return {kind = "added", id = id, state = state}
+		return { kind = "added", id = id, state = state }
 	elseif op == "u" then
 		local existing = self.entities[id]
 		if not existing then
@@ -233,11 +271,13 @@ function M:_apply_entity_update(u)
 				end
 			end
 		end
-		if #changed == 0 then return nil end
-		return {kind = "updated", id = id, state = existing, changed = changed}
+		if #changed == 0 then
+			return nil
+		end
+		return { kind = "updated", id = id, state = existing, changed = changed }
 	elseif op == "r" then
 		self.entities[id] = nil
-		return {kind = "removed", id = id}
+		return { kind = "removed", id = id }
 	end
 	return nil
 end
@@ -264,7 +304,9 @@ end
 
 function M:_handle_message(raw)
 	local msg = json.decode(raw)
-	if not msg then return end
+	if not msg then
+		return
+	end
 
 	local msg_type = msg.type or ""
 	local payload = msg.payload or {}
@@ -298,7 +340,9 @@ function M:_handle_message(raw)
 	end
 
 	local event = SERVER_EVENTS[msg_type]
-	if event then fire(self, event, payload) end
+	if event then
+		fire(self, event, payload)
+	end
 end
 
 return M
