@@ -145,6 +145,31 @@ function M:send_heartbeat()
 	self:_send_fire_and_forget("session.heartbeat", {})
 end
 
+-- Round-trip a session.heartbeat and report the elapsed time. The server
+-- echoes the heartbeat with the same cid, so this is the cheapest way for
+-- a game to surface live RTT (e.g. in a HUD).
+function M:ping(callback)
+	if not self.connection then
+		if callback then
+			callback(nil, "not connected")
+		end
+		return
+	end
+	local t0 = socket.gettime()
+	self:_send_with_callback("session.heartbeat", {}, function(_payload, err)
+		if err then
+			if callback then
+				callback(nil, err)
+			end
+			return
+		end
+		local rtt_ms = math.floor((socket.gettime() - t0) * 1000 + 0.5)
+		if callback then
+			callback(rtt_ms, nil)
+		end
+	end)
+end
+
 function M:list_worlds(opts, callback)
 	local payload = {}
 	if type(opts) == "string" then
