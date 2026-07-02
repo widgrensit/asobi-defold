@@ -47,8 +47,7 @@ function M._request(client, method, path, url, data, callback, retried)
 end
 
 function M._refresh_and_retry(client, method, path, url, data, callback)
-	local auth = require("asobi.api.auth")
-	auth.refresh(client, function(_data, err)
+	client.auth.refresh(client, function(_data, err)
 		if err then
 			if callback then
 				callback(nil, {status_code = 401, error = "auth_expired"})
