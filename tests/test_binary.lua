@@ -206,7 +206,8 @@ do
 	local rt = new_rt()
 	local added
 	rt:on("entity_added", function(id) added = id end)
-	rt:_handle_message('{"type":"world.tick","payload":{"tick":1,"updates":[{"op":"add","entity_id":"j1","fields":{"x":5}}]}}')
+	rt:_handle_message('{"type":"world.tick","payload":{"tick":1,"updates":' ..
+		'[{"op":"add","entity_id":"j1","fields":{"x":5}}]}}')
 	check(added == "j1", "JSON text frame still parsed after binary sniffing added")
 end
 
