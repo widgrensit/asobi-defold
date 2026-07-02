@@ -66,10 +66,15 @@ function M:connect()
 	local params = {}
 	self.connection = websocket.connect(self.client.ws_url, params, function(_self, conn, data)
 		if data.event == websocket.EVENT_CONNECTED then
-			self:_send("session.connect", {token = self.client.session_token})
+			self:_send("session.connect", {token = self.client.access_token})
 		elseif data.event == websocket.EVENT_DISCONNECTED then
 			self.connection = nil
-			fire(self, "disconnected", data.message or "closed")
+			local reason = data.message or "closed"
+			if M._is_auth_close(reason) then
+				fire(self, "auth_expired", reason)
+			else
+				fire(self, "disconnected", reason)
+			end
 		elseif data.event == websocket.EVENT_MESSAGE then
 			self:_handle_message(data.message)
 		elseif data.event == websocket.EVENT_ERROR then
@@ -83,6 +88,28 @@ function M:disconnect()
 		websocket.disconnect(self.connection)
 		self.connection = nil
 	end
+end
+
+-- Re-authenticate a live socket with the current access_token. Called
+-- after a REST refresh rotates the pair so the socket is not left holding
+-- a burned token. No-op if not connected.
+function M:reauth()
+	if not self.connection then return end
+	self:_send("session.connect", {token = self.client.access_token})
+end
+
+local AUTH_CLOSE_REASONS = {
+	session_revoked = true,
+	invalid_token = true,
+	idle_auth_timeout = true,
+}
+
+function M._is_auth_close(reason)
+	if type(reason) ~= "string" then return false end
+	for key in pairs(AUTH_CLOSE_REASONS) do
+		if string.find(reason, key, 1, true) then return true end
+	end
+	return false
 end
 
 function M:join_match(match_id)
@@ -320,6 +347,13 @@ function M:_handle_message(raw)
 	-- don't survive a re-join into a fresh zone.
 	if msg_type == "world.joined" or msg_type == "world.left" then
 		self.entities = {}
+	end
+
+	-- A server error rejecting the access_token (bad/expired/revoked) is an
+	-- auth failure, not a transient protocol error: surface it as such so
+	-- games force a re-login instead of retrying a dead token.
+	if msg_type == "error" and M._is_auth_close(payload.reason) then
+		fire(self, "auth_expired", payload.reason)
 	end
 
 	local event = SERVER_EVENTS[msg_type]

@@ -20,6 +20,9 @@ jobs:
       - name: Run dispatch unit tests (asobi protocol fixture corpus)
         run: lua5.4 tests/test_dispatch.lua
 
+      - name: Run auth-flow unit tests
+        run: lua5.4 tests/test_auth.lua
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

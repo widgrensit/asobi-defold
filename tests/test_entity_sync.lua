@@ -26,7 +26,7 @@ local function check(cond, msg)
 end
 
 local function new_rt()
-	return realtime.new({ws_url = "ws://stub", session_token = ""})
+	return realtime.new({ws_url = "ws://stub", access_token = ""})
 end
 
 -- ------------------------------------------------------------------
