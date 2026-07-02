@@ -255,30 +255,35 @@ function M:_send_fire_and_forget(msg_type, payload)
 	websocket.send(self.connection, msg, {type = websocket.DATA_TYPE_TEXT})
 end
 
--- Applies one server update to the managed entity registry, returning
--- {kind, id, state, changed_fields} so callers can fire callbacks. The
--- server emits PARTIAL diffs on op="u" — only fields that changed —
--- so we MUST merge against the last known state, not overwrite.
-function M:_apply_entity_update(u)
-	local id = u.id
+-- Applies one server Delta to the managed entity registry, returning
+-- {kind, id, state, changed_fields} so callers can fire callbacks.
+--
+-- Backend Delta shape (see asobi zone_delta / asobi_ws_binary):
+--   {op = "add"|"update"|"remove", entity_id = <id>, fields = {...}}
+-- Game fields live under `fields`, NOT at the top level. On "update"
+-- the server emits PARTIAL diffs — only the fields that changed — so we
+-- MUST merge against the last known state, not overwrite.
+function M:_apply_entity_update(delta)
+	local id = delta.entity_id
 	if not id then return nil end
-	local op = u.op
-	if op == "a" then
+	local op = delta.op
+	local fields = delta.fields
+	if op == "add" then
 		local state = {}
-		for k, v in pairs(u) do
-			if k ~= "op" and k ~= "id" then state[k] = v end
+		if type(fields) == "table" then
+			for k, v in pairs(fields) do state[k] = v end
 		end
 		self.entities[id] = state
 		return {kind = "added", id = id, state = state}
-	elseif op == "u" then
+	elseif op == "update" then
 		local existing = self.entities[id]
 		if not existing then
 			existing = {}
 			self.entities[id] = existing
 		end
 		local changed = {}
-		for k, v in pairs(u) do
-			if k ~= "op" and k ~= "id" then
+		if type(fields) == "table" then
+			for k, v in pairs(fields) do
 				if existing[k] ~= v then
 					existing[k] = v
 					changed[#changed + 1] = k
@@ -287,7 +292,7 @@ function M:_apply_entity_update(u)
 		end
 		if #changed == 0 then return nil end
 		return {kind = "updated", id = id, state = existing, changed = changed}
-	elseif op == "r" then
+	elseif op == "remove" then
 		self.entities[id] = nil
 		return {kind = "removed", id = id}
 	end
@@ -314,7 +319,92 @@ function M:_dispatch_tick(payload)
 	fire(self, "tick", payload.tick, payload)
 end
 
+-- The backend also speaks a binary WS sub-protocol (asobi_ws_binary) on
+-- the same socket. Defold's websocket callback delivers every frame as a
+-- Lua string with no reliable text/binary discriminator, so we sniff the
+-- first byte: JSON text frames always start with '{' (0x7B), whereas the
+-- binary frame's leading Type byte is one of 0x01/0x02/0x03. This is
+-- unambiguous for the current protocol; if the binary protocol ever adds
+-- a Type >= 0x7B this heuristic would need a real discriminator.
+local BINARY_TYPES = {[0x01] = true, [0x02] = true, [0x03] = true}
+
+local function is_binary_frame(raw)
+	if type(raw) ~= "string" or #raw < 1 then return false end
+	return BINARY_TYPES[string.byte(raw, 1)] == true
+end
+
+-- Reads `n` bytes big-endian as an unsigned integer starting at `pos`.
+-- Returns the value and the position just past the field.
+local function read_uint(raw, pos, n)
+	local value = 0
+	for i = 0, n - 1 do
+		value = value * 256 + string.byte(raw, pos + i)
+	end
+	return value, pos + n
+end
+
+local function read_int32(raw, pos)
+	local value, next_pos = read_uint(raw, pos, 4)
+	if value >= 0x80000000 then value = value - 0x100000000 end
+	return value, next_pos
+end
+
+local BINARY_OPS = {[0] = "add", [1] = "update", [2] = "remove"}
+
+-- Parses one binary frame `<<Type:8, Len:32/big, Payload:Len>>` and routes
+-- it through the same paths as the equivalent JSON messages:
+--   0x01 terrain_chunk -> world_terrain (same as world.terrain)
+--   0x02 entity_delta  -> _dispatch_tick (same as world.tick)
+--   0x03 match_state   -> reserved (ignored)
+function M:_handle_binary(raw)
+	if #raw < 5 then return end
+	local btype = string.byte(raw, 1)
+	local payload_len, pos = read_uint(raw, 2, 4)
+	local payload_end = pos + payload_len - 1
+	if payload_end > #raw then return end
+	if btype == 0x01 then
+		if payload_len < 8 then return end
+		local cx, cy
+		cx, pos = read_int32(raw, pos)
+		cy, pos = read_int32(raw, pos)
+		local data = string.sub(raw, pos, payload_end)
+		fire(self, "world_terrain", {coords = {cx, cy}, data = data, binary = true})
+	elseif btype == 0x02 then
+		if payload_len < 12 then return end
+		local tick, count
+		tick, pos = read_uint(raw, pos, 8)
+		count, pos = read_uint(raw, pos, 4)
+		local updates = {}
+		for _ = 1, count do
+			if pos > payload_end then break end
+			local op_byte, id_len
+			op_byte, pos = read_uint(raw, pos, 1)
+			id_len, pos = read_uint(raw, pos, 2)
+			local id = string.sub(raw, pos, pos + id_len - 1)
+			pos = pos + id_len
+			local fields_len
+			fields_len, pos = read_uint(raw, pos, 4)
+			local fields = {}
+			if fields_len > 0 then
+				fields = json.decode(string.sub(raw, pos, pos + fields_len - 1)) or {}
+			end
+			pos = pos + fields_len
+			updates[#updates + 1] = {
+				op = BINARY_OPS[op_byte],
+				entity_id = id,
+				fields = fields,
+			}
+		end
+		self:_dispatch_tick({tick = tick, updates = updates})
+	end
+end
+
 function M:_handle_message(raw)
+	if is_binary_frame(raw) then
+		self:_handle_binary(raw)
+		return
+	end
+
 	local msg = json.decode(raw)
 	if not msg then return end
 
