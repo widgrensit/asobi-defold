@@ -9,7 +9,7 @@ function M.register(client, username, password, display_name, callback)
 		display_name = display_name or username,
 	}, function(data, err)
 		if not err and data then
-			client.session_token = data.session_token
+			client.set_tokens(data.access_token, data.refresh_token)
 			client.player_id = data.player_id
 		end
 		if callback then callback(data, err) end
@@ -22,7 +22,7 @@ function M.login(client, username, password, callback)
 		password = password,
 	}, function(data, err)
 		if not err and data then
-			client.session_token = data.session_token
+			client.set_tokens(data.access_token, data.refresh_token)
 			client.player_id = data.player_id
 		end
 		if callback then callback(data, err) end
@@ -35,7 +35,7 @@ function M.oauth(client, provider, token, callback)
 		token = token,
 	}, function(data, err)
 		if not err and data then
-			client.session_token = data.session_token
+			client.set_tokens(data.access_token, data.refresh_token)
 			client.player_id = data.player_id
 		end
 		if callback then callback(data, err) end
@@ -53,20 +53,31 @@ function M.unlink_provider(client, provider, callback)
 	http_mod.delete(client, "/api/v1/auth/unlink?provider=" .. http_mod._urlencode(provider), callback)
 end
 
+-- Single-use rotation: the server burns the presented refresh_token and
+-- returns a fresh pair. Store BOTH. A live socket authenticated with the
+-- old access_token is re-authed with the rotated one.
 function M.refresh(client, callback)
 	http_mod.post(client, "/api/v1/auth/refresh", {
-		session_token = client.session_token,
+		refresh_token = client.refresh_token,
 	}, function(data, err)
 		if not err and data then
-			client.session_token = data.session_token
+			client.set_tokens(data.access_token, data.refresh_token)
+			if client.realtime and client.realtime.reauth then
+				client.realtime:reauth()
+			end
 		end
 		if callback then callback(data, err) end
 	end)
 end
 
-function M.logout(client)
-	client.session_token = nil
-	client.player_id = nil
+function M.logout(client, callback)
+	http_mod.post(client, "/api/v1/auth/logout", {
+		refresh_token = client.refresh_token,
+	}, function(data, err)
+		client.clear_tokens()
+		client.player_id = nil
+		if callback then callback(data, err) end
+	end)
 end
 
 return M
