@@ -45,7 +45,7 @@ function init(self)
 
     client.auth.register(client, "player_" .. tostring(math.random(1, 1e9)),
         "pass1234", nil, function(data, err)
-        if err then print("register failed: " .. err) return end
+        if err then print("register failed: " .. tostring(err.error)) return end
 
         client.realtime:on("entity_added", function(id, state)
             if id == client.realtime.local_player_id then return end
@@ -61,16 +61,24 @@ function init(self)
             -- go.delete(ghosts[id])
         end)
 
-        client.realtime:connect()
-        client.realtime:find_or_create_world("walkers", function(payload, err)
-            if err then print("join failed: " .. err) return end
-            client.realtime:send_world_input({kind = "move", x = 500, y = 200})
+        -- connect() authenticates asynchronously; wait for "connected" before
+        -- sending game messages, or they race ahead of the session.
+        client.realtime:on("connected", function()
+            client.realtime:find_or_create_world("walkers", function(payload, err)
+                if err then print("join failed: " .. tostring(err.error)) return end
+                client.realtime:send_world_input({kind = "move", x = 500, y = 200})
+            end)
         end)
+        client.realtime:connect()
     end)
 end
 ```
 
 A complete runnable version is in `example/multiplayer.lua`.
+
+> Worlds require a backend with a **world mode**. The `sdk_demo_backend` docker
+> quickstart only ships a **match mode**, so run the Matchmaking example below
+> against it; Worlds need a world-mode backend (e.g. `asobi_arena_lua`).
 
 ### Matchmaking — transient matchmade games
 
@@ -82,22 +90,25 @@ local client
 function init(self)
     client = asobi.create("localhost", 8084)
 
-    client.auth.login(client, "player1", "secret123", function(data, err)
-        if err then return end
+    client.auth.register(client, "player_" .. tostring(math.random(1, 1e9)),
+        "pass1234", nil, function(data, err)
+        if err then print("register failed: " .. tostring(err.error)) return end
 
-        -- match.matched (matchmaker push) and match.joined (reply to a
-        -- client-initiated match.join) both signal "in a match — match.state
-        -- will follow." Subscribe to both to cover matchmade and direct flows.
+        -- The matchmaker places you into a match and pushes match.matched. It
+        -- auto-places you, so there is no join step - match.state starts flowing.
         client.realtime:on("match_matched", function(payload)
-            client.realtime:join_match(payload.match_id)
+            print("matched into " .. tostring(payload.match_id))
         end)
 
         client.realtime:on("match_state", function(payload)
-            print("Tick: " .. tostring(payload.tick))
+            print("elapsed_ms: " .. tostring(payload.elapsed_ms))
         end)
 
+        -- Wait for "connected" before queueing, or the request races auth.
+        client.realtime:on("connected", function()
+            client.realtime:add_to_matchmaker("demo")
+        end)
         client.realtime:connect()
-        client.realtime:add_to_matchmaker("demo")
     end)
 end
 ```
