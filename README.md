@@ -8,8 +8,8 @@ Add the SDK and the WebSocket extension to your `game.project`:
 
 ```
 [project]
-dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v0.7.1.zip
-dependencies#1 = https://github.com/defold/extension-websocket/archive/master.zip
+dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.2.1.zip
+dependencies#1 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.2.zip
 ```
 
 Then *Project → Fetch Libraries* in the Defold editor. Pin to a tag — `main` is unstable. See [releases](https://github.com/widgrensit/asobi-defold/releases) for available versions.
