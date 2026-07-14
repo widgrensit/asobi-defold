@@ -115,6 +115,37 @@ end
 
 See `example/example.lua` for the matchmaker REST + realtime flow.
 
+## Guest / anonymous auth
+
+Sign a player in with no username or password. You supply a stable
+`device_id` and a `device_secret` (base64 of >=32 CSPRNG bytes, generated and
+stored by your game — the SDK just passes it through). The same pair resumes
+the same guest on later launches.
+
+```lua
+local asobi = require("asobi.client")
+
+local client = asobi.create("localhost", 8084)
+
+client.auth.guest(client, device_id, device_secret, function(data, err)
+    if err then print("guest sign-in failed: " .. tostring(err.error)) return end
+    -- data.created is true on first sign-in, absent on resume.
+    print("signed in as guest " .. tostring(data.player_id))
+end)
+```
+
+Later, convert the guest into a full account (keeps the same `player_id`).
+The call is authenticated with the guest's current access token, so run it
+after a successful `guest(...)`:
+
+```lua
+client.auth.upgrade_guest(client, "chosen_name", "pass1234", function(data, err)
+    if err then print("upgrade failed: " .. tostring(err.error)) return end
+    -- Tokens are rotated to the claimed account automatically.
+    print("upgraded to " .. tostring(data.username))
+end)
+```
+
 ## Multiplayer (entity sync)
 
 The SDK maintains a managed registry of all entities in your current world or match and applies the server's partial diffs for you. Game code listens to high-level callbacks instead of merging diffs by hand:
@@ -147,7 +178,7 @@ See `example/multiplayer.lua` for a runnable starter.
 
 ## Features
 
-- **Auth** - Register, login, token refresh
+- **Auth** - Register, login, guest (anonymous), guest upgrade, token refresh
 - **Players** - Profiles, updates
 - **Worlds** - List, create, find-or-create, join, leave, input, entity sync
 - **Matchmaker** - Queue, status, cancel

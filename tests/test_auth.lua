@@ -337,6 +337,74 @@ do
 	check(realtime._is_auth_close("closed") == false, "ordinary close is not auth-expired")
 end
 
+-- Test 11: guest posts {device_id, device_secret} with no auth header and
+-- stores the returned token pair + player_id.
+do
+	reset()
+	local client = new_client()
+	queue(200, {
+		player_id = "g1", access_token = "GA", refresh_token = "GR",
+		username = "guest-1", created = true, guest = true,
+	})
+	local got
+	client.auth.guest(client, "device-abc", "c2VjcmV0", function(data, err) got = {data = data, err = err} end)
+
+	local body = json.decode(http_requests[1].data)
+	check(http_requests[1].url:find("/api/v1/auth/guest", 1, true) ~= nil, "guest hits /auth/guest")
+	check(body.device_id == "device-abc", "guest posts device_id")
+	check(body.device_secret == "c2VjcmV0", "guest posts device_secret")
+	check(http_requests[1].headers.Authorization == nil, "guest sends no auth header")
+	check(client.access_token == "GA" and client.refresh_token == "GR", "guest stored token pair")
+	check(client.player_id == "g1", "guest stored player_id")
+	check(saved_store["asobi/auth"].refresh_token == "GR", "guest persisted refresh_token")
+	check(got and not got.err and got.data.created == true, "guest callback surfaced created:true")
+end
+
+-- Test 12: a guest error (e.g. weak_device_secret) surfaces verbatim and
+-- leaves tokens untouched.
+do
+	reset()
+	local client = new_client()
+	queue(400, {error = "weak_device_secret"})
+	local got
+	client.auth.guest(client, "device-abc", "short", function(data, err) got = {data = data, err = err} end)
+	check(got and got.err and got.err.error == "weak_device_secret", "guest error surfaced verbatim")
+	check(client.access_token == nil and client.refresh_token == nil, "guest error left tokens untouched")
+end
+
+-- Test 13: upgrade_guest posts {username, password} with the current Bearer
+-- token and REPLACES the stored token pair with the returned one.
+do
+	reset()
+	local client = new_client()
+	client.set_tokens("GA", "GR")
+	client.player_id = "g1"
+	queue(200, {player_id = "g1", access_token = "UA", refresh_token = "UR", username = "claimed", upgraded = true})
+	local got
+	client.auth.upgrade_guest(client, "claimed", "pass1234", function(data, err) got = {data = data, err = err} end)
+
+	local body = json.decode(http_requests[1].data)
+	check(http_requests[1].url:find("/api/v1/auth/guest/upgrade", 1, true) ~= nil, "upgrade hits /auth/guest/upgrade")
+	check(body.username == "claimed" and body.password == "pass1234", "upgrade posts username + password")
+	check(http_requests[1].headers.Authorization == "Bearer GA", "upgrade sends current Bearer access_token")
+	check(client.access_token == "UA" and client.refresh_token == "UR", "upgrade replaced token pair")
+	check(saved_store["asobi/auth"].refresh_token == "UR", "upgrade persisted replaced refresh_token")
+	check(got and not got.err and got.data.upgraded == true, "upgrade callback surfaced upgraded:true")
+end
+
+-- Test 14: an upgrade conflict (username_taken) surfaces verbatim and leaves
+-- the existing guest tokens in place.
+do
+	reset()
+	local client = new_client()
+	client.set_tokens("GA", "GR")
+	queue(409, {error = "username_taken"})
+	local got
+	client.auth.upgrade_guest(client, "taken", "pass1234", function(data, err) got = {data = data, err = err} end)
+	check(got and got.err and got.err.error == "username_taken", "upgrade conflict surfaced verbatim")
+	check(client.access_token == "GA" and client.refresh_token == "GR", "upgrade error kept existing tokens")
+end
+
 -- --------------------------------------------------------------------
 if failures == 0 then
 	print("OK: all auth-flow tests passed")
