@@ -42,6 +42,32 @@ function M.oauth(client, provider, token, callback)
 	end)
 end
 
+function M.guest(client, device_id, device_secret, callback)
+	http_mod.post(client, "/api/v1/auth/guest", {
+		device_id = device_id,
+		device_secret = device_secret,
+	}, function(data, err)
+		if not err and data then
+			client.set_tokens(data.access_token, data.refresh_token)
+			client.player_id = data.player_id
+		end
+		if callback then callback(data, err) end
+	end)
+end
+
+function M.upgrade_guest(client, username, password, callback)
+	http_mod.post(client, "/api/v1/auth/guest/upgrade", {
+		username = username,
+		password = password,
+	}, function(data, err)
+		if not err and data then
+			client.set_tokens(data.access_token, data.refresh_token)
+			client.player_id = data.player_id
+		end
+		if callback then callback(data, err) end
+	end)
+end
+
 function M.link_provider(client, provider, token, callback)
 	http_mod.post(client, "/api/v1/auth/link", {
 		provider = provider,
