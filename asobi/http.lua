@@ -101,7 +101,8 @@ function M._handle_response(response, callback)
 	if response.status >= 400 then
 		callback(nil, {
 			status_code = response.status,
-			error = body and body.error or ("HTTP " .. response.status)
+			error = body and body.error or ("HTTP " .. response.status),
+			fields = body and body.fields
 		})
 	else
 		callback(body, nil)
