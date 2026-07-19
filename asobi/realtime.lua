@@ -13,6 +13,7 @@ local SERVER_EVENTS = {
 	["match.matched"] = "match_matched",
 	["match.joined"] = "match_joined",
 	["match.left"] = "match_left",
+	["match.list"] = "match_list",
 	["match.finished"] = "match_finished",
 	["match.matchmaker_expired"] = "matchmaker_expired",
 	["match.matchmaker_failed"] = "matchmaker_failed",
@@ -122,6 +123,17 @@ end
 
 function M:leave_match()
 	self:_send("match.leave", {})
+end
+
+function M:list_matches(opts, callback)
+	local payload = {}
+	if type(opts) == "string" then
+		payload.mode = opts
+	elseif type(opts) == "table" then
+		if opts.mode then payload.mode = opts.mode end
+		if opts.has_capacity ~= nil then payload.has_capacity = opts.has_capacity end
+	end
+	self:_send_with_callback("match.list", payload, callback)
 end
 
 function M:add_to_matchmaker(opts)

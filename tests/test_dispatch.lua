@@ -137,6 +137,7 @@ local EXPECTED = {
 	["match.matchmaker_failed"] = "matchmaker_failed",
 	["match.vote_start"] = "vote_start",
 	["match.vote_tally"] = "vote_tally",
+	["match.list"] = "match_list",
 	["match.vote_result"] = "vote_result",
 	["match.vote_vetoed"] = "vote_vetoed",
 	["matchmaker.queued"] = "matchmaker_queued",
