@@ -41,6 +41,24 @@ local SERVER_EVENTS = {
 	["world.finished"] = "world_finished",
 }
 
+-- Every event a user can register for: the SDK-side callback names in
+-- SERVER_EVENTS, plus the lifecycle and entity-sync events realtime.lua
+-- fires itself. Derived from SERVER_EVENTS rather than restated, so a new
+-- wire event cannot be registerable-but-unlisted.
+local KNOWN_EVENTS = {
+	auth_expired = true,
+	disconnected = true,
+	entity_added = true,
+	entity_updated = true,
+	entity_removed = true,
+	error = true,
+	tick = true,
+	world_terrain = true,
+}
+for _, cb_name in pairs(SERVER_EVENTS) do
+	KNOWN_EVENTS[cb_name] = true
+end
+
 function M.new(client)
 	return setmetatable({
 		client = client,
@@ -53,7 +71,17 @@ function M.new(client)
 	}, M)
 end
 
+-- Validated at register time: a typo'd name is a callback that silently
+-- never fires, which is indistinguishable from the server not sending the
+-- event. Failing here points at the offending line instead.
 function M:on(event, callback)
+	if not KNOWN_EVENTS[event] then
+		error(
+			("asobi: unknown event %q - a callback registered for it would never fire")
+				:format(tostring(event)),
+			2
+		)
+	end
 	self.callbacks[event] = callback
 end
 
