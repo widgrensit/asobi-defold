@@ -26,6 +26,9 @@ jobs:
       - name: Run auth-flow unit tests
         run: lua5.4 tests/test_auth.lua
 
+      - name: Run event-name validation tests
+        run: lua5.4 tests/test_event_names.lua
+
   smoke:
     runs-on: ubuntu-24.04
     steps:
