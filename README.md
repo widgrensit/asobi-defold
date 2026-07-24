@@ -167,6 +167,20 @@ storage yourself (e.g. an OS keychain), keep using `guest(client, id, secret, �
 directly — `asobi.device.generate()` / `asobi.device.load_or_create()` are also
 exposed if you want just the pieces.
 
+To forget the local guest (a "switch account", "play as someone else", or a
+"delete my data" action), erase the stored keypair — the next `guest_device`
+mints a brand-new guest:
+
+```lua
+local device = require("asobi.device")
+device.clear()  -- pass the same {app=..., file=...} you signed in with
+```
+
+`clear` is local-only; it does not delete the server account (pair it with
+`logout` to end the session, or `upgrade_guest` first to keep the guest as a
+real account). Note `logout` on its own keeps the keypair, so the same guest
+resumes on the next `guest_device`.
+
 Later, convert the guest into a full account (keeps the same `player_id`).
 The call is authenticated with the guest's current access token, so run it
 after a successful `guest(...)`:

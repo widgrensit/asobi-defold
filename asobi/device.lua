@@ -139,6 +139,21 @@ function M.load_or_create(opts)
 	return id, secret
 end
 
+-- Erase the stored credentials so the next load_or_create / guest_device mints
+-- a brand-new guest (data.created = true). Use for "switch account", "play as
+-- someone else", or a local "forget me" / delete-my-data action. This is
+-- local-only: it does not delete the server account (pair that with a logout to
+-- end the session, or upgrade_guest first if the player wants to keep it). Pass
+-- the same app/file opts you signed in with.
+function M.clear(opts)
+	opts = opts or {}
+	local path = save_path(opts)
+	if not path then
+		return
+	end
+	sys.save(path, {})
+end
+
 -- Exposed for the encoder golden-vector test; internal, not part of the API.
 M._base64 = base64
 

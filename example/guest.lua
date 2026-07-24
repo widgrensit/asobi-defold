@@ -54,6 +54,19 @@ function upgrade_to_account(username, password)
 	end)
 end
 
+-- --- Switch guest / "forget me" / delete-my-data ------------------------
+-- Erase the stored keypair. The NEXT guest_device mints a brand-new guest
+-- (data.created = true). This is local-only - it does not delete the server
+-- account, so pair it with logout to end the current session. If the player
+-- wants to KEEP the current guest, call upgrade_guest first.
+function forget_guest()
+	local device = require("asobi.device")
+	client.auth.logout(client, function()
+		device.clear() -- pass the same app/file opts you signed in with
+		print("guest forgotten; next launch starts fresh")
+	end)
+end
+
 -- --- Options: custom storage or a stronger RNG --------------------------
 -- For production, back the secret with a real CSPRNG (crypto extension); you
 -- can also choose where it is stored.

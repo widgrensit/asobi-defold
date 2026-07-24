@@ -131,6 +131,26 @@ do
 	check(saved_store["mygame/creds"] ~= nil, "persisted under the overridden app/file path")
 end
 
+print("clear erases stored credentials -> next load mints a fresh guest")
+do
+	reset()
+	local id1 = select(1, device.load_or_create())
+	device.clear()
+	local stored = saved_store["asobi/guest_device"]
+	check(type(stored) ~= "table" or not stored.device_secret, "cleared pair gone from storage")
+	local id2 = select(1, device.load_or_create())
+	check(id1 ~= id2, "a new guest id is minted after clear")
+end
+
+print("clear honours app/file overrides")
+do
+	reset()
+	device.load_or_create({ app = "x", file = "y" })
+	device.clear({ app = "x", file = "y" })
+	local s = saved_store["x/y"]
+	check(type(s) ~= "table" or not s.device_secret, "cleared under the overridden path")
+end
+
 -- --------------------------------------------------------------------
 print("auth.guest_device loads/persists creds and forwards to guest")
 do
