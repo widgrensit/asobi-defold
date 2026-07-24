@@ -8,7 +8,7 @@ Add the SDK and the WebSocket extension to your `game.project`:
 
 ```
 [project]
-dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.2.1.zip
+dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.7.0.zip
 dependencies#1 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.2.zip
 ```
 
