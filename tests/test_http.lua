@@ -49,6 +49,17 @@ do
 	check(got and got.err.raw == "no available server", "raw body snippet included")
 end
 
+print("oversized non-JSON body -> raw is truncated to 200 chars")
+do
+	local got
+	local big = string.rep("x", 500) -- not JSON, >200 chars
+	http._handle_response({ status = 502, response = big }, function(data, err)
+		got = { data = data, err = err }
+	end)
+	check(got and got.err and got.err.error == "invalid_response", "still a clean error")
+	check(got and got.err.raw and #got.err.raw == 200, "raw truncated to 200 chars")
+end
+
 print("valid JSON success -> body passed through")
 do
 	local got
