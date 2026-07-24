@@ -134,6 +134,39 @@ client.auth.guest(client, device_id, device_secret, function(data, err)
 end)
 ```
 
+### Let the SDK manage the device credentials (opt-in)
+
+Generating the pair, encoding the secret correctly, and persisting it across
+launches is the same boilerplate in every game, so there is an opt-in helper
+that does it for you. `guest_device` loads the saved pair (or generates and
+persists one on first run via `sys.save`) and signs in — one call:
+
+```lua
+client.auth.guest_device(client, function(data, err)
+    if err then print("guest sign-in failed: " .. tostring(err.error)) return end
+    print("signed in as guest " .. tostring(data.player_id))
+end)
+```
+
+Pass options to control storage or supply your own randomness:
+
+```lua
+client.auth.guest_device(client, {
+    app = "mygame",            -- sys.get_save_file app name (default "asobi")
+    file = "guest_device",     -- save file name
+    random_bytes = my_csprng,  -- function(n) -> n bytes; override the default RNG
+}, function(data, err) ... end)
+```
+
+The default RNG is best-effort seeded `math.random` (Defold has no core CSPRNG) —
+acceptable for a guest credential that is generated once and stored, but **for
+production you should pass `random_bytes` backed by a crypto extension** so the
+secret is cryptographically random. A custom `random_bytes(n)` must return at
+least `n` bytes (the helper asserts this). If you want to manage
+storage yourself (e.g. an OS keychain), keep using `guest(client, id, secret, …)`
+directly — `asobi.device.generate()` / `asobi.device.load_or_create()` are also
+exposed if you want just the pieces.
+
 Later, convert the guest into a full account (keeps the same `player_id`).
 The call is authenticated with the guest's current access token, so run it
 after a successful `guest(...)`:
