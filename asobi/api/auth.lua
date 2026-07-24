@@ -55,6 +55,21 @@ function M.guest(client, device_id, device_secret, callback)
 	end)
 end
 
+-- Opt-in convenience: load (or generate + persist) a device credential pair
+-- and sign in as a guest in one call. Equivalent to calling M.guest with a
+-- {device_id, device_secret} you manage yourself. opts is forwarded to
+-- asobi.device.load_or_create (app/file/random_bytes overrides); it may be
+-- omitted, in which case the single argument is the callback.
+function M.guest_device(client, opts, callback)
+	if callback == nil and type(opts) == "function" then
+		callback = opts
+		opts = nil
+	end
+	local device = require("asobi.device")
+	local device_id, device_secret = device.load_or_create(opts)
+	M.guest(client, device_id, device_secret, callback)
+end
+
 function M.upgrade_guest(client, username, password, callback)
 	http_mod.post(client, "/api/v1/auth/guest/upgrade", {
 		username = username,
