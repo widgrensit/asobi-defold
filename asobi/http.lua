@@ -96,7 +96,20 @@ function M._handle_response(response, callback)
 	if not callback then return end
 	local body = {}
 	if response.response and response.response ~= "" then
-		body = json.decode(response.response)
+		-- A non-JSON body is almost always a gateway/proxy error (e.g. traefik's
+		-- "no available server" while the environment redeploys), not an app
+		-- response. Guard the decode so it surfaces a clean error instead of an
+		-- opaque Lua crash in the callback chain.
+		local ok, decoded = pcall(json.decode, response.response)
+		if not ok then
+			callback(nil, {
+				status_code = response.status,
+				error = "invalid_response",
+				raw = string.sub(response.response, 1, 200),
+			})
+			return
+		end
+		body = decoded
 	end
 	if response.status >= 400 then
 		callback(nil, {

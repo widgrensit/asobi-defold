@@ -32,6 +32,9 @@ jobs:
       - name: Run auth-flow unit tests
         run: lua5.4 tests/test_auth.lua
 
+      - name: Run http response-handler tests
+        run: lua5.4 tests/test_http.lua
+
       - name: Run guest device-credential helper tests
         run: lua5.4 tests/test_device.lua
 
