@@ -109,4 +109,50 @@ function M.create(host, port, use_ssl)
 	return client
 end
 
+-- One-call happy path: guest sign-in, connect, and queue for a match, with the
+-- handler-before-connect ordering handled for you (registering a handler after
+-- connect() so it never fires is the mistake everyone hits first). Returns the
+-- client, so you can later disconnect() or reach the full API off it.
+--
+-- For entity-sync or custom match state, use M.create + the explicit realtime
+-- flow instead - this helper deliberately hides the client lifecycle.
+--
+-- opts:
+--   host        (required) e.g. "grid-hackers-gridhackers.pendragames.asobi.dev"
+--   ssl         default true; set false for a local http/ws backend
+--   port        default 443 (ssl) or 8084 (plain)
+--   mode        matchmaker mode, default "default"
+--   on_queued   (p) -> ... ; p.ticket_id, p.players_needed
+--   on_matched  (p) -> ... ; p.match_id
+--   on_state    (s) -> ... ; match state snapshots
+--   on_failed   (p) -> ... ; p.reason, fired for matchmaker_failed AND errors
+--   on_signed_in(data) -> ... ; after guest sign-in, before connect
+function M.quick_start(opts)
+	assert(opts and opts.host, "asobi.quick_start: opts.host is required")
+	local use_ssl = opts.ssl ~= false
+	local port = opts.port or (use_ssl and 443 or 8084)
+	local client = M.create(opts.host, port, use_ssl)
+
+	client.auth.guest_device(client, function(data, err)
+		if err then
+			if opts.on_failed then opts.on_failed({reason = err.error}) end
+			return
+		end
+		if opts.on_signed_in then opts.on_signed_in(data) end
+
+		local rt = client.realtime
+		if opts.on_queued then rt:on("matchmaker_queued", opts.on_queued) end
+		if opts.on_matched then rt:on("match_matched", opts.on_matched) end
+		if opts.on_state then rt:on("match_state", opts.on_state) end
+		if opts.on_failed then
+			rt:on("matchmaker_failed", opts.on_failed)
+			rt:on("error", function(p) opts.on_failed({reason = p.reason or p.type or p.error}) end)
+		end
+		rt:on("connected", function() rt:quick_play(opts.mode or "default") end)
+		rt:connect()
+	end)
+
+	return client
+end
+
 return M

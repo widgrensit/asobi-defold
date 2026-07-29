@@ -84,6 +84,26 @@ A complete runnable version is in `example/multiplayer.lua`.
 
 ### Matchmaking — transient matchmade games
 
+Fastest path: `asobi.quick_start` does guest sign-in, connect, and queue in one
+call, with the handler-before-connect ordering handled for you.
+
+```lua
+local asobi = require("asobi.client")
+
+function init(self)
+    self.client = asobi.quick_start({
+        host = "your-env.asobi.dev",   -- ssl defaults to true (port 443)
+        mode = "demo",
+        on_queued  = function(p) print("queued, need " .. tostring(p.players_needed) .. " more") end,
+        on_matched = function(p) print("matched! " .. p.match_id) end,
+        on_failed  = function(p) print("failed: " .. tostring(p.reason)) end,
+    })
+end
+```
+
+For entity-sync or full control over the client lifecycle, use the explicit
+flow (`asobi.create` + realtime):
+
 ```lua
 local asobi = require("asobi.client")
 
