@@ -76,6 +76,8 @@ end
 
 A complete runnable version is in `example/multiplayer.lua`.
 
+`client.realtime:join_or_host("walkers", cb)` is a convenience alias for `find_or_create_world` - join an open world of that mode, or host a new one, in one race-free call.
+
 > Worlds require a backend with a **world mode**. The `sdk_demo_backend` docker
 > quickstart only ships a **match mode**, so run the Matchmaking example below
 > against it; Worlds need a world-mode backend (e.g. `asobi_arena_lua`).
@@ -104,6 +106,13 @@ function init(self)
             print("elapsed_ms: " .. tostring(payload.elapsed_ms))
         end)
 
+        -- Always register these three, or matchmaking fails silently:
+        -- confirmation that your ticket was accepted, a bad/unknown mode, and a
+        -- match that could not start (e.g. a crash in your game's init).
+        client.realtime:on("matchmaker_queued", function(p) print("queued " .. p.ticket_id) end)
+        client.realtime:on("error", function(p) print("error: " .. tostring(p.reason or p.type)) end)
+        client.realtime:on("matchmaker_failed", function(p) print("mm failed: " .. tostring(p.reason)) end)
+
         -- Wait for "connected" before queueing, or the request races auth.
         client.realtime:on("connected", function()
             client.realtime:add_to_matchmaker("demo")
@@ -113,7 +122,16 @@ function init(self)
 end
 ```
 
+`client.realtime:quick_play("demo")` is a convenience alias for `add_to_matchmaker` if you prefer the intent-named call.
+
 See `example/example.lua` for the matchmaker REST + realtime flow.
+
+> **Testing matchmaking solo.** The matchmaker forms a match only once `match_size`
+> players have queued, so a single client against a `match_size = 2` mode waits for a
+> second player. To try it on your own: set `match_size = 1` in that mode's `match.lua`
+> (a lone ticket matches instantly), or run two clients. Do not queue the same client
+> twice to force a match - that submits two tickets and matches the player with
+> themselves.
 
 ## Guest / anonymous auth
 
@@ -219,9 +237,19 @@ for id, state in pairs(client.realtime.entities) do
 end
 ```
 
-The SDK listens to both `world.tick` and `match.state` server frames internally, so it works the same in world-mode and match-mode games. You don't need to register on `on_world_tick` / `on_match_state` yourself unless you want the raw frame.
+The entity registry is populated from **diff frames** shaped `{tick, updates = [...]}`. World-mode (`world.tick`) always sends these, so entity sync is automatic there. Match-mode only fills the registry if **your game emits the same `{tick, updates}` shape** from its `match.state`. Many match games (including the `sdk_demo_backend` demo mode) send a custom `match.state` instead, e.g. a `players` map. For those, register `match_state` and read the payload directly:
 
-See `example/multiplayer.lua` for a runnable starter.
+```lua
+client.realtime:on("match_state", function(payload)
+    for id, p in pairs(payload.players or {}) do
+        if id ~= client.realtime.local_player_id then
+            -- render ghost at p.x, p.y
+        end
+    end
+end)
+```
+
+See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua` (the match-mode loop).
 
 ## Features
 
