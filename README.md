@@ -119,6 +119,13 @@ end
 
 See `example/example.lua` for the matchmaker REST + realtime flow.
 
+> **Testing matchmaking solo.** The matchmaker forms a match only once `match_size`
+> players have queued, so a single client against a `match_size = 2` mode waits for a
+> second player. To try it on your own: set `match_size = 1` in that mode's `match.lua`
+> (a lone ticket matches instantly), or run two clients. Do not queue the same client
+> twice to force a match - that submits two tickets and matches the player with
+> themselves.
+
 ## Guest / anonymous auth
 
 Sign a player in with no username or password. You supply a stable
