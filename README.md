@@ -106,6 +106,13 @@ function init(self)
             print("elapsed_ms: " .. tostring(payload.elapsed_ms))
         end)
 
+        -- Always register these three, or matchmaking fails silently:
+        -- confirmation that your ticket was accepted, a bad/unknown mode, and a
+        -- match that could not start (e.g. a crash in your game's init).
+        client.realtime:on("matchmaker_queued", function(p) print("queued " .. p.ticket_id) end)
+        client.realtime:on("error", function(p) print("error: " .. tostring(p.reason or p.type)) end)
+        client.realtime:on("matchmaker_failed", function(p) print("mm failed: " .. tostring(p.reason)) end)
+
         -- Wait for "connected" before queueing, or the request races auth.
         client.realtime:on("connected", function()
             client.realtime:add_to_matchmaker("demo")
@@ -230,9 +237,19 @@ for id, state in pairs(client.realtime.entities) do
 end
 ```
 
-The SDK listens to both `world.tick` and `match.state` server frames internally, so it works the same in world-mode and match-mode games. You don't need to register on `on_world_tick` / `on_match_state` yourself unless you want the raw frame.
+The entity registry is populated from **diff frames** shaped `{tick, updates = [...]}`. World-mode (`world.tick`) always sends these, so entity sync is automatic there. Match-mode only fills the registry if **your game emits the same `{tick, updates}` shape** from its `match.state`. Many match games (including the `sdk_demo_backend` demo mode) send a custom `match.state` instead, e.g. a `players` map. For those, register `match_state` and read the payload directly:
 
-See `example/multiplayer.lua` for a runnable starter.
+```lua
+client.realtime:on("match_state", function(payload)
+    for id, p in pairs(payload.players or {}) do
+        if id ~= client.realtime.local_player_id then
+            -- render ghost at p.x, p.y
+        end
+    end
+end)
+```
+
+See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua` (the match-mode loop).
 
 ## Features
 
