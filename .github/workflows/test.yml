@@ -41,6 +41,9 @@ jobs:
       - name: Run event-name validation tests
         run: lua5.4 tests/test_event_names.lua
 
+      - name: Run play-alias tests
+        run: lua5.4 tests/test_play_aliases.lua
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

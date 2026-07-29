@@ -176,6 +176,14 @@ function M:add_to_matchmaker(opts)
 	self:_send("matchmaker.add", payload)
 end
 
+-- Convenience alias for add_to_matchmaker: drop into a matchmade game. The
+-- matchmaker forms or fills a match for you, race-free, so this is the whole
+-- "join an open game or start one" flow for match-mode. `opts` is a mode string
+-- or the same table add_to_matchmaker takes.
+function M:quick_play(opts)
+	self:add_to_matchmaker(opts)
+end
+
 function M:remove_from_matchmaker(ticket_id)
 	self:_send("matchmaker.remove", {ticket_id = ticket_id})
 end
@@ -258,6 +266,13 @@ end
 
 function M:find_or_create_world(mode, callback)
 	self:_send_with_callback("world.find_or_create", {mode = mode}, callback)
+end
+
+-- Convenience alias for find_or_create_world: join an open world of `mode`, or
+-- host a new one. One race-free call (the server resolves it), for the
+-- browse-or-host lobby flow that world-mode is built for.
+function M:join_or_host(mode, callback)
+	self:find_or_create_world(mode, callback)
 end
 
 function M:send_world_input(input)

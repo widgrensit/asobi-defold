@@ -76,6 +76,8 @@ end
 
 A complete runnable version is in `example/multiplayer.lua`.
 
+`client.realtime:join_or_host("walkers", cb)` is a convenience alias for `find_or_create_world` - join an open world of that mode, or host a new one, in one race-free call.
+
 > Worlds require a backend with a **world mode**. The `sdk_demo_backend` docker
 > quickstart only ships a **match mode**, so run the Matchmaking example below
 > against it; Worlds need a world-mode backend (e.g. `asobi_arena_lua`).
@@ -112,6 +114,8 @@ function init(self)
     end)
 end
 ```
+
+`client.realtime:quick_play("demo")` is a convenience alias for `add_to_matchmaker` if you prefer the intent-named call.
 
 See `example/example.lua` for the matchmaker REST + realtime flow.
 
