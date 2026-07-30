@@ -47,3 +47,19 @@ Runs the canonical [SMOKE.md](https://github.com/widgrensit/sdk_demo_backend/blo
 - Both `/ws` connect + `session.connected` (Scenario 1, steps 2-3)
 - Both `matchmaker.add` → `match.matched` with the same `match_id` (Scenario 2)
 - Client A sees `match.state`, sends `match.input {move_x=1}`, and confirms its own `x` advances past `x_initial + 10` (Scenario 3)
+
+## game.send round-trip scenario (`send_roundtrip_test.lua`)
+
+`smoke.lua` covers state broadcast but never `game.send`.
+`send_roundtrip_test.lua` covers the server-push path that silently broke
+in widgrensit/asobi#235 / widgrensit/asobi_lua#103: client sends
+`match.input {message = ...}`, the server's `handle_input` echoes it back
+via `game.send`, and the client asserts the `game_message` callback fires
+with the right payload and input counter. It also documents the join
+contract: the matchmaker auto-joins matched players, so `match_matched`
+means you are in - a wire `match.joined` only answers an explicit join.
+
+Run it like the smoke, but bundle with the bootstrap pointed at
+`/smoke_tests/roundtrip/main.collectionc` and a backend whose mode `echo`
+echoes input via `game.send` (any script whose `handle_input` calls
+`game.send(player_id, {echo = input.message})`).

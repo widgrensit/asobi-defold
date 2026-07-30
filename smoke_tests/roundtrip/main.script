@@ -1,0 +1,31 @@
+local smoke = require("smoke_tests.send_roundtrip_test")
+
+local function parse_url(url)
+	local host, port = url:match("^https?://([^:/]+):?(%d*)")
+	if not host or host == "" then return "localhost", 8084 end
+	port = (port == "" or port == nil) and 8084 or tonumber(port)
+	return host, port
+end
+
+function init(self)
+	local url = sys.get_config_string("asobi.url", os.getenv("ASOBI_URL") or "http://localhost:8084")
+	local host, port = parse_url(url)
+	print("[roundtrip] target " .. host .. ":" .. tostring(port))
+	math.randomseed(os.time())
+	self.done = false
+	smoke.run(host, port, function(ok)
+		self.done = true
+		if ok then
+			print("[roundtrip] PASS")
+			sys.exit(0)
+		else
+			print("[roundtrip] FAIL")
+			sys.exit(1)
+		end
+	end)
+end
+
+function update(self, dt)
+	if self.done then return end
+	smoke.update()
+end
