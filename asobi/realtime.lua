@@ -154,11 +154,29 @@ function M:leave_match()
 	self:_send("match.leave", {})
 end
 
+-- Guards against `{"grid2"}` being passed where `{mode = "grid2"}` was meant.
+-- Lua's `{"grid2"}` sets the numeric index [1], not a field named `mode`, so
+-- opts.mode is nil and the call would otherwise silently fall through to
+-- whatever default the caller applies - a completely different mode than
+-- intended, with no error or warning. Fail loudly instead.
+local function check_positional_mode(fn_name, opts)
+	if type(opts) == "table" and opts[1] ~= nil and opts.mode == nil then
+		local value = opts[1]
+		local shown = type(value) == "string" and ("%q"):format(value) or tostring(value)
+		error(
+			("asobi: %s opts table has a positional value (%s) but no `mode` field - did you mean {mode = %s}?")
+				:format(fn_name, shown, shown),
+			3
+		)
+	end
+end
+
 function M:list_matches(opts, callback)
 	local payload = {}
 	if type(opts) == "string" then
 		payload.mode = opts
 	elseif type(opts) == "table" then
+		check_positional_mode("list_matches", opts)
 		if opts.mode then payload.mode = opts.mode end
 		if opts.has_capacity ~= nil then payload.has_capacity = opts.has_capacity end
 	end
@@ -170,6 +188,7 @@ function M:add_to_matchmaker(opts)
 	if type(opts) == "string" then
 		payload.mode = opts
 	elseif type(opts) == "table" then
+		check_positional_mode("add_to_matchmaker", opts)
 		payload.mode = opts.mode or "default"
 		if opts.properties then payload.properties = opts.properties end
 		if opts.party then payload.party = opts.party end
@@ -251,6 +270,7 @@ function M:list_worlds(opts, callback)
 	if type(opts) == "string" then
 		payload.mode = opts
 	elseif type(opts) == "table" then
+		check_positional_mode("list_worlds", opts)
 		if opts.mode then payload.mode = opts.mode end
 		if opts.has_capacity ~= nil then payload.has_capacity = opts.has_capacity end
 	end
