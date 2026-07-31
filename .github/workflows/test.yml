@@ -44,6 +44,9 @@ jobs:
       - name: Run play-alias tests
         run: lua5.4 tests/test_play_aliases.lua
 
+      - name: Run matchmaker mode-guard tests
+        run: lua5.4 tests/test_matchmaker_mode_guard.lua
+
   smoke:
     runs-on: ubuntu-24.04
     steps:
