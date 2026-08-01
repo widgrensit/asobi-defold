@@ -93,9 +93,11 @@ jobs:
         run: cd sdk_demo_backend && docker compose down -v
 
   # End-to-end smoke against sdk_demo_backend, run inside a real Defold
-  # engine. Drives smoke_tests/smoke.lua via a `bob.jar bundle` so the
-  # SDK's HTTP client and the `defold-websocket` native extension are
-  # exercised exactly as a game would use them.
+  # engine. Drives smoke_tests/smoke.lua and smoke_tests/send_roundtrip_test.lua
+  # via two `bob.jar bundle` passes of the same project (the second overrides
+  # only the bootstrap collection via --settings) so the SDK's HTTP client and
+  # the `defold-websocket` native extension are exercised exactly as a game
+  # would use them.
   #
   # Why bundle and not `dmengine_headless`? The prebuilt
   # `dmengine_headless` strips `http.request` from the runtime, so the
@@ -188,6 +190,35 @@ jobs:
           fi
           # Belt-and-braces: also assert the explicit PASS line.
           grep -F "[smoke] PASS" smoke.log
+
+      # Second bundle of the same project, with the bootstrap collection
+      # overridden (via bob.jar's --settings overlay, applied on top of
+      # game.project) to smoke_tests/roundtrip/main.collectionc instead of
+      # rebuilding from a resolve step or editing game.project. Exercises
+      # game.send round-trip (asobi#235 regression class) and game.error
+      # dispatch (asobi#238) against sdk_demo_backend's `echo` mode.
+      - name: Bundle Defold project (game.send round-trip scenario)
+        run: |
+          java -jar bob.jar --root . \
+            --platform x86_64-linux \
+            --variant debug \
+            --archive \
+            --settings smoke_tests/roundtrip/bootstrap.project \
+            --bundle-output dist-roundtrip \
+            build bundle
+
+      - name: Run engine game.send round-trip smoke
+        env:
+          ASOBI_URL: http://localhost:8084
+        run: |
+          set -o pipefail
+          xvfb-run -a timeout 90 ./dist-roundtrip/asobi/asobi.x86_64 2>&1 | tee roundtrip.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "engine round-trip smoke failed with status $status"
+            exit "$status"
+          fi
+          grep -F "[roundtrip] PASS" roundtrip.log
 
       - name: Backend logs on failure
         if: failure()

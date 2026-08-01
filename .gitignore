@@ -1,6 +1,7 @@
 # Defold build artifacts
 /build/
 /dist/
+/dist-roundtrip/
 /.internal/
 /manifest.private.der
 /manifest.public.der
