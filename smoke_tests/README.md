@@ -59,7 +59,25 @@ with the right payload and input counter. It also documents the join
 contract: the matchmaker auto-joins matched players, so `match_matched`
 means you are in - a wire `match.joined` only answers an explicit join.
 
-Run it like the smoke, but bundle with the bootstrap pointed at
-`/smoke_tests/roundtrip/main.collectionc` and a backend whose mode `echo`
-echoes input via `game.send` (any script whose `handle_input` calls
-`game.send(player_id, {echo = input.message})`).
+Once two echoes round-trip cleanly, the scenario sends one more input
+(`{message = "boom"}`) that deliberately makes `handle_input` raise a Lua
+error, and asserts the resulting `game.error` event dispatches to a
+`game_error` callback with `callback = "handle_input"` and
+`script = "echo.lua"` (widgrensit/asobi#238).
+
+Runs against `sdk_demo_backend`'s `echo` mode (`matchmaker.add {mode =
+"echo"}`, `match_size = 1`), whose `handle_input` echoes `{message}` via
+`game.send(player_id, {echo = input.message, count = ...})` and raises on
+`{message = "boom"}`. That backend also needs `ASOBI_DEV_ERRORS=true` set
+(already the case in `sdk_demo_backend`'s `docker-compose.yml`) or the
+deliberate error stays log-only and the `game_error` assertion times out.
+
+## How CI runs the round-trip scenario
+
+The `engine-smoke` job bundles the project a second time with
+[`smoke_tests/roundtrip/bootstrap.project`](roundtrip/bootstrap.project)
+passed via bob.jar's `--settings` flag, which overrides just
+`[bootstrap] main_collection` to point at
+`/smoke_tests/roundtrip/main.collectionc` — no second `resolve`, no edit
+to the root `game.project`, no second checkout. The resulting binary is
+run the same way as the main smoke, asserting `[roundtrip] PASS`.

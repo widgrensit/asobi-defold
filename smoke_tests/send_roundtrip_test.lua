@@ -7,6 +7,11 @@
 --
 -- game.send was silently dropped server-side (asobi#235) and then again by
 -- a stale image pin (asobi_lua#101/#103); this asserts the whole path.
+--
+-- Once two echoes round-trip cleanly, a final {message = "boom"} input
+-- deliberately makes the server's handle_input raise a Lua error, so this
+-- also asserts the game_error dispatch mapping (widgrensit/asobi#238) end
+-- to end against a real server-generated game.error event.
 
 local asobi = require("asobi.client")
 
@@ -54,6 +59,7 @@ end
 function M.run(host, port, done_callback)
 	state = {
 		echoes = {},
+		expect_error = false,
 		done = false,
 		ok = false,
 		started_at = socket.gettime(),
@@ -65,6 +71,24 @@ function M.run(host, port, done_callback)
 
 	c.realtime:on("error", function(payload)
 		fail("server error: " .. tostring(payload and payload.reason))
+	end)
+
+	c.realtime:on("game_error", function(payload)
+		if not state.expect_error then
+			fail("unexpected game_error: " .. tostring(payload and payload.message))
+			return
+		end
+		log("game_error callback=" .. tostring(payload.callback)
+			.. " script=" .. tostring(payload.script))
+		if payload.callback ~= "handle_input" then
+			fail("game_error callback wrong: " .. tostring(payload.callback))
+			return
+		end
+		if payload.script ~= "echo.lua" then
+			fail("game_error script wrong: " .. tostring(payload.script))
+			return
+		end
+		pass()
 	end)
 
 	c.realtime:on("game_message", function(payload)
@@ -88,7 +112,9 @@ function M.run(host, port, done_callback)
 					.. " count=" .. tostring(m.count))
 				return
 			end
-			pass()
+			log("sending deliberately-erroring input to assert game_error dispatch")
+			state.expect_error = true
+			send_command(c, "boom")
 		end
 	end)
 
