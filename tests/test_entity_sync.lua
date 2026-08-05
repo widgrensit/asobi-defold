@@ -29,11 +29,30 @@ local function new_rt()
 	return realtime.new({ws_url = "ws://stub", access_token = ""})
 end
 
--- Delta helpers mirror the backend wire shape:
+-- Delta helpers mirror the BINARY wire shape (0x02 entity_delta):
 --   {op = "add"|"update"|"remove", entity_id = <id>, fields = {...}}
 local function add(id, fields) return {op = "add", entity_id = id, fields = fields} end
 local function update(id, fields) return {op = "update", entity_id = id, fields = fields} end
 local function remove(id) return {op = "remove", entity_id = id} end
+
+-- ...and these mirror the JSON shape the server actually sends on world.tick
+-- and match.state (asobi_zone.erl): short op, `id`, game fields at the TOP
+-- level rather than nested under `fields`.
+--
+-- Every test below used the binary helpers only, which is why the SDK could
+-- ignore the JSON shape entirely - dropping every entity update in any game
+-- not on the binary protocol - while this suite stayed green.
+local function jadd(id, fields)
+	local d = {op = "a", id = id}
+	for k, v in pairs(fields or {}) do d[k] = v end
+	return d
+end
+local function jupdate(id, fields)
+	local d = {op = "u", id = id}
+	for k, v in pairs(fields or {}) do d[k] = v end
+	return d
+end
+local function jremove(id) return {op = "r", id = id} end
 
 -- ------------------------------------------------------------------
 -- Test 1: op="add" populates the entity with full state and fires added.
@@ -144,6 +163,62 @@ do
 		"rt_a registry isolated from rt_b")
 	check(rt_b.entities["pb1"] ~= nil and rt_b.entities["pa"] == nil,
 		"rt_b registry isolated from rt_a")
+end
+
+-- ------------------------------------------------------------------
+-- The JSON shape, end to end: add, partial update, remove.
+-- ------------------------------------------------------------------
+do
+	local rt = new_rt()
+	local added, updated, removed, changed_fields
+	rt:on("entity_added", function(id, state) added = {id, state} end)
+	rt:on("entity_updated", function(id, state, changed)
+		updated = {id, state}
+		changed_fields = changed
+	end)
+	rt:on("entity_removed", function(id) removed = id end)
+
+	rt:_dispatch_tick({tick = 1, updates = {jadd("p1", {x = 10, y = 20, hp = 100})}})
+	check(added ~= nil, "json add fires entity_added")
+	check(rt.entities["p1"] ~= nil, "json add reaches the registry")
+	check(rt.entities["p1"].x == 10 and rt.entities["p1"].hp == 100,
+		"json add lifts top-level fields into state")
+	check(rt.entities["p1"].op == nil and rt.entities["p1"].id == nil,
+		"json add does not leak envelope keys into state")
+
+	rt:_dispatch_tick({tick = 2, updates = {jupdate("p1", {x = 11})}})
+	check(updated ~= nil, "json update fires entity_updated")
+	check(rt.entities["p1"].x == 11, "json update applies the changed field")
+	check(rt.entities["p1"].hp == 100, "json update MERGES, keeping untouched fields")
+	check(#changed_fields == 1 and changed_fields[1] == "x",
+		"json update reports only what changed")
+
+	rt:_dispatch_tick({tick = 3, updates = {jremove("p1")}})
+	check(removed == "p1", "json remove fires entity_removed")
+	check(rt.entities["p1"] == nil, "json remove clears the registry")
+end
+
+-- The fixture is the shared corpus - the exact bytes the server sends. Hand
+-- written deltas agree with whatever the SDK already believes; this one does
+-- not, which is the whole point of checking against it.
+do
+	local f = io.open("tests/fixtures/world.tick.json", "r")
+	check(f ~= nil, "world.tick.json fixture is readable")
+	if f then
+		local raw = f:read("*a")
+		f:close()
+		local decode = dofile("tests/json_decode.lua")
+		local msg = decode(raw)
+		local rt = new_rt()
+		local added
+		rt:on("entity_added", function(id, state) added = {id = id, state = state} end)
+		rt:_dispatch_tick(msg.payload)
+		check(added ~= nil, "the world.tick fixture produces an entity_added")
+		if added then
+			check(added.state.x == 120 and added.state.y == 80,
+				"the world.tick fixture's coordinates reach the callback")
+		end
+	end
 end
 
 -- ------------------------------------------------------------------

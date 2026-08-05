@@ -271,6 +271,30 @@ end)
 
 See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua` (the match-mode loop).
 
+## Extensions (RPC)
+
+Server extensions expose methods over the same socket. Call one with
+`realtime:rpc`:
+
+```lua
+self.realtime:rpc("quests.claim", {quest_key = "daily"}, function(result, err)
+	if err then
+		if err.code == "quests.already_claimed" then
+			print("already claimed today")
+		end
+		return
+	end
+	print("reward: " .. result.reward)
+end)
+```
+
+Calls are correlated by cid, so several can be in flight at once and may answer
+out of order. `params` and `result` are always tables, so either can gain a
+field without breaking a shipped game.
+
+On failure `err` is the shared error object - `{code, message, details}`.
+Branch on `err.code`; `message` is for humans and may be reworded at any time.
+
 ## Features
 
 - **Auth** - Register, login, guest (anonymous), guest upgrade, token refresh
@@ -286,6 +310,7 @@ See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua`
 - **Notifications** - List, read, delete
 - **Storage** - Cloud saves, generic key-value
 - **Realtime** - WebSocket for worlds, matches, chat, presence, matchmaking
+- **Extensions** - Call server extension methods over RPC
 
 See the [WebSocket protocol guide](https://github.com/widgrensit/asobi/blob/main/guides/websocket-protocol.md) for the full event surface.
 

@@ -32,6 +32,11 @@ local SERVER_EVENTS = {
 	["notification.new"] = "notification",
 	["game.message"] = "game_message",
 	["game.error"] = "game_error",
+	-- The server's newer names for the same two events. Every other SDK routes
+	-- both pairs to the same callback; without these a Defold game silently
+	-- drops dev-console output from a server on the current naming.
+	["module.message"] = "game_message",
+	["module.error"] = "game_error",
 	["vote.cast_ok"] = "vote_cast_ok",
 	["vote.veto_ok"] = "vote_veto_ok",
 	["world.tick"] = "world_tick",
@@ -266,6 +271,28 @@ function M:ping(callback)
 	end)
 end
 
+--- Call an extension's RPC method.
+---
+---   realtime:rpc("quests.claim", {quest_key = "daily"}, function(result, err)
+---     if err then
+---       if err.code == "quests.already_claimed" then ... end
+---     else
+---       print(result.reward)
+---     end
+---   end)
+---
+--- Correlated by cid like every other request, so concurrent calls are safe
+--- and may answer out of order. `params` and `result` are always tables, so
+--- either can grow a field without breaking a shipped game. On failure `err`
+--- is the shared error object; branch on `err.code`, never on `err.message`.
+function M:rpc(method, params, callback)
+	self:_send_with_callback("rpc.call", {
+		protocol = 1,
+		method = method,
+		params = params or {},
+	}, callback)
+end
+
 function M:list_worlds(opts, callback)
 	local payload = {}
 	if type(opts) == "string" then
@@ -335,16 +362,40 @@ end
 -- Applies one server Delta to the managed entity registry, returning
 -- {kind, id, state, changed_fields} so callers can fire callbacks.
 --
--- Backend Delta shape (see asobi zone_delta / asobi_ws_binary):
---   {op = "add"|"update"|"remove", entity_id = <id>, fields = {...}}
--- Game fields live under `fields`, NOT at the top level. On "update"
--- the server emits PARTIAL diffs — only the fields that changed — so we
--- MUST merge against the last known state, not overwrite.
-function M:_apply_entity_update(delta)
-	local id = delta.entity_id
+-- TWO shapes reach here, and they disagree:
+--
+--   JSON (world.tick / match.state, see asobi_zone.erl)
+--     {op = "a"|"u"|"r", id = <id>, <game fields at the top level>}
+--   Binary (0x02 entity_delta, decoded by _handle_binary above)
+--     {op = "add"|"update"|"remove", entity_id = <id>, fields = {...}}
+--
+-- This function used to understand only the binary one, so entity sync over
+-- JSON silently did nothing - every delta fell through to `return nil` and no
+-- entity callback ever fired. Normalise both to one form rather than teaching
+-- the callers which transport they are on.
+--
+-- On "update" the server emits PARTIAL diffs - only the fields that changed -
+-- so we MUST merge against the last known state, not overwrite.
+local OP_ALIASES = {a = "add", u = "update", r = "remove"}
+
+local function normalise_delta(delta)
+	local id = delta.id or delta.entity_id
 	if not id then return nil end
-	local op = delta.op
+	local op = OP_ALIASES[delta.op] or delta.op
 	local fields = delta.fields
+	if type(fields) ~= "table" then
+		-- Flat JSON form: everything except the envelope keys is a game field.
+		fields = {}
+		for k, v in pairs(delta) do
+			if k ~= "op" and k ~= "id" and k ~= "entity_id" then fields[k] = v end
+		end
+	end
+	return id, op, fields
+end
+
+function M:_apply_entity_update(delta)
+	local id, op, fields = normalise_delta(delta)
+	if not id then return nil end
 	if op == "add" then
 		local state = {}
 		if type(fields) == "table" then
@@ -492,7 +543,17 @@ function M:_handle_message(raw)
 	if cid and self.pending[cid] then
 		local cb = self.pending[cid]
 		self.pending[cid] = nil
-		if msg_type == "error" then
+		if msg_type == "rpc.error" then
+			-- The shared error object: {code, message, details}. Passing only
+			-- the message would throw away the code, which is the one part a
+			-- caller can branch on. An empty object still gets a code, or a
+			-- server defect and a domain outcome look identical.
+			local rpc_err = payload.error or {}
+			rpc_err.code = rpc_err.code or "internal"
+			cb(nil, rpc_err)
+		elseif msg_type == "rpc.ok" then
+			cb(payload.result or {}, nil)
+		elseif msg_type == "error" then
 			cb(nil, payload.reason or "unknown error")
 		else
 			cb(payload, nil)

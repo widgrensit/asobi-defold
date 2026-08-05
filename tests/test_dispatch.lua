@@ -124,7 +124,17 @@ _G.json = {encode = function() return "" end, decode = json_decode}
 -- For each server wire `type`, the SDK callback name a user binds via
 -- realtime.on(...). Mirrors the dispatch table in asobi/realtime.lua.
 -- Drift between this map and the SDK is caught by the assertions below.
+-- Answers correlated by cid rather than fired as an event: the reply goes to
+-- the caller that made the request, so there is no on() handler to assert.
+-- Listed here so a new fixture still has to be accounted for, and covered for
+-- real in tests/test_rpc.lua.
+local CORRELATED = "<correlated by cid>"
+
 local EXPECTED = {
+	["rpc.ok"] = CORRELATED,
+	["rpc.error"] = CORRELATED,
+	["module.message"] = "game_message",
+	["module.error"] = "game_error",
 	["error"] = "error",
 	["session.connected"] = "connected",
 	["session.heartbeat"] = "heartbeat",
@@ -225,7 +235,9 @@ end
 for _, name in ipairs(fixtures) do
 	local mtype = name:gsub("%.json$", "")
 	local expected_cb = EXPECTED[mtype]
-	if expected_cb then
+	if expected_cb == CORRELATED then
+		pass(mtype .. " -> correlated by cid (see test_rpc.lua)")
+	elseif expected_cb then
 		local raw = read_file(FIXTURE_DIR .. "/" .. name)
 		if not raw then
 			fail("could not read " .. name)
