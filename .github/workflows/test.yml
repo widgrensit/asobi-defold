@@ -26,6 +26,9 @@ jobs:
       - name: Run dispatch unit tests (asobi protocol fixture corpus)
         run: lua5.4 tests/test_dispatch.lua
 
+      - name: Run RPC unit tests (extension call/reply correlation)
+        run: lua5.4 tests/test_rpc.lua
+
       - name: Run binary WS protocol unit tests
         run: lua5.4 tests/test_binary.lua
 
