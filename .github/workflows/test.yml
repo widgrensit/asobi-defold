@@ -53,6 +53,9 @@ jobs:
       - name: Run join_match / join_world tests
         run: lua5.4 tests/test_join.lua
 
+      - name: Run extension frame dedupe tests
+        run: lua5.4 tests/test_extension_frame_dedupe.lua
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

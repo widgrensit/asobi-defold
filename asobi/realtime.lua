@@ -48,6 +48,15 @@ local SERVER_EVENTS = {
 	["world.finished"] = "world_finished",
 }
 
+-- The two extension frames the server emits in both dialects, mapped to the
+-- dialect that produced them. See the dedupe in _handle_message.
+local EXTENSION_FRAME_DIALECT = {
+	["game.message"] = "game",
+	["game.error"] = "game",
+	["module.message"] = "module",
+	["module.error"] = "module",
+}
+
 -- Every event a user can register for: the SDK-side callback names in
 -- SERVER_EVENTS, plus the lifecycle and entity-sync events realtime.lua
 -- fires itself. Derived from SERVER_EVENTS rather than restated, so a new
@@ -608,6 +617,22 @@ function M:_handle_message(raw)
 	-- games force a re-login instead of retrying a dead token.
 	if msg_type == "error" and M._is_auth_close(payload.reason) then
 		fire(self, "auth_expired", payload.reason)
+	end
+
+	-- The server emits BOTH dialects of the two extension frames for every
+	-- game.send: `game.message` (pre-S6 compat) and `module.message`
+	-- (current), same body, back to back. Both map to one callback here, so
+	-- a game that registers `game_message` saw every message twice.
+	--
+	-- Bind to whichever dialect this connection sees first and ignore the
+	-- other for the rest of the session. Order-agnostic on purpose: which
+	-- twin arrives first is a server detail, and either one alone is a valid
+	-- server (a pre-S6 build sends only `game.*`, an operator with
+	-- `asobi.ws_legacy_game_frames = false` sends only `module.*`).
+	local dialect = EXTENSION_FRAME_DIALECT[msg_type]
+	if dialect then
+		self.extension_dialect = self.extension_dialect or dialect
+		if self.extension_dialect ~= dialect then return end
 	end
 
 	local event = SERVER_EVENTS[msg_type]
