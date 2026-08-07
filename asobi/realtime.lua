@@ -48,6 +48,15 @@ local SERVER_EVENTS = {
 	["world.finished"] = "world_finished",
 }
 
+-- The two extension frames the server emits in both dialects, mapped to the
+-- dialect that produced them. See the dedupe in _handle_message.
+local EXTENSION_FRAME_DIALECT = {
+	["game.message"] = "game",
+	["game.error"] = "game",
+	["module.message"] = "module",
+	["module.error"] = "module",
+}
+
 -- Every event a user can register for: the SDK-side callback names in
 -- SERVER_EVENTS, plus the lifecycle and entity-sync events realtime.lua
 -- fires itself. Derived from SERVER_EVENTS rather than restated, so a new
@@ -148,8 +157,24 @@ function M._is_auth_close(reason)
 	return false
 end
 
-function M:join_match(match_id)
-	self:_send("match.join", {match_id = match_id})
+-- Join a match by id: the second half of the browse-and-drop-in flow that
+-- list_matches starts, and the way a client re-enters a match it was invited
+-- to. A running match accepts joiners while player_count < max_players.
+--
+-- `opts` is optional and may be `{ctx = {...}}`, passed through untouched to
+-- the game module's join callback (a room code, a team pick). `callback` gets
+-- the match.joined payload, or nil plus a reason: match_not_found, match_full,
+-- join_rate_limited, or whatever a refusing game module returned. Passing the
+-- callback as the second argument works too.
+function M:join_match(match_id, opts, callback)
+	if type(opts) == "function" then
+		opts, callback = nil, opts
+	end
+	local payload = {match_id = match_id}
+	if type(opts) == "table" and opts.ctx ~= nil then
+		payload.ctx = opts.ctx
+	end
+	self:_send_with_callback("match.join", payload, callback)
 end
 
 function M:send_match_input(input)
@@ -309,8 +334,18 @@ function M:create_world(mode, callback)
 	self:_send_with_callback("world.create", {mode = mode}, callback)
 end
 
-function M:join_world(world_id, callback)
-	self:_send_with_callback("world.join", {world_id = world_id}, callback)
+-- Mirrors join_match: `opts` may be `{ctx = {...}}`, which the server passes
+-- to the world's join callback untouched. That is how a code-gated private
+-- lobby is built, since a world is the only session a client can create.
+function M:join_world(world_id, opts, callback)
+	if type(opts) == "function" then
+		opts, callback = nil, opts
+	end
+	local payload = {world_id = world_id}
+	if type(opts) == "table" and opts.ctx ~= nil then
+		payload.ctx = opts.ctx
+	end
+	self:_send_with_callback("world.join", payload, callback)
 end
 
 function M:find_or_create_world(mode, callback)
@@ -582,6 +617,22 @@ function M:_handle_message(raw)
 	-- games force a re-login instead of retrying a dead token.
 	if msg_type == "error" and M._is_auth_close(payload.reason) then
 		fire(self, "auth_expired", payload.reason)
+	end
+
+	-- The server emits BOTH dialects of the two extension frames for every
+	-- game.send: `game.message` (pre-S6 compat) and `module.message`
+	-- (current), same body, back to back. Both map to one callback here, so
+	-- a game that registers `game_message` saw every message twice.
+	--
+	-- Bind to whichever dialect this connection sees first and ignore the
+	-- other for the rest of the session. Order-agnostic on purpose: which
+	-- twin arrives first is a server detail, and either one alone is a valid
+	-- server (a pre-S6 build sends only `game.*`, an operator with
+	-- `asobi.ws_legacy_game_frames = false` sends only `module.*`).
+	local dialect = EXTENSION_FRAME_DIALECT[msg_type]
+	if dialect then
+		self.extension_dialect = self.extension_dialect or dialect
+		if self.extension_dialect ~= dialect then return end
 	end
 
 	local event = SERVER_EVENTS[msg_type]
