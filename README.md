@@ -153,6 +153,39 @@ See `example/example.lua` for the matchmaker REST + realtime flow.
 > twice to force a match - that submits two tickets and matches the player with
 > themselves.
 
+### Drop into a running match — browse and join
+
+The matchmaker places you automatically, but a client can also join a match by
+id: browse with `list_matches`, join with `join_match`. A running match accepts
+joiners while `player_count < max_players`, so this is the drop-in flow.
+
+```lua
+client.realtime:list_matches({mode = "arena", has_capacity = true}, function(payload, err)
+    if err then print("list failed: " .. tostring(err)) return end
+    local match = payload.matches[1]
+    if not match then print("nothing open") return end
+
+    client.realtime:join_match(match.match_id, function(info, join_err)
+        if join_err then print("join failed: " .. tostring(join_err)) return end
+        print("joined " .. info.match_id .. " (" .. info.player_count .. "/" .. info.max_players .. ")")
+    end)
+end)
+```
+
+`join_match` takes an optional opts table carrying `ctx`, passed to your game
+module's join callback untouched — a room code, a team pick:
+
+```lua
+client.realtime:join_match(match_id, {ctx = {code = "AB12"}}, function(info, err) ... end)
+```
+
+`join_world` takes the same `(world_id, opts, callback)` shape.
+
+> Matches are **unlisted by default** and `listed` is not a Lua global, so a
+> mode opts into `list_matches` with `listed => true` in the operator's
+> `game_modes` config. Worlds default to listed. See
+> [Lobbies](https://github.com/widgrensit/asobi/blob/main/guides/lobbies.md).
+
 ## Guest / anonymous auth
 
 Sign a player in with no username or password. You supply a stable
@@ -318,7 +351,7 @@ Branch on `err.code`; `message` is for humans and may be reworded at any time.
 - **Players** - Profiles, updates
 - **Worlds** - List, create, find-or-create, join, leave, input, entity sync
 - **Matchmaker** - Queue, status, cancel
-- **Matches** - List, details
+- **Matches** - List, join, details
 - **Leaderboards** - Top scores, around player, submit
 - **Economy** - Wallets, store, purchases
 - **Inventory** - Items, consume
