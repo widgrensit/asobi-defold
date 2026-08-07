@@ -231,6 +231,23 @@ client.auth.upgrade_guest(client, "chosen_name", "pass1234", function(data, err)
 end)
 ```
 
+### Testing with two clients on one machine
+
+The saved pair identifies the machine, so two instances of the same build sign
+in as the same player: matchmaking will not pair them and their views drift. In
+a dev build, skip persistence and mint a throwaway guest per launch instead:
+
+```lua
+local device = require("asobi.device")
+local device_id, device_secret = device.generate()
+client.auth.guest(client, device_id, device_secret, function(data, err) ... end)
+```
+
+For stable test players, give each instance its own save file with
+`--config=asobi.player_slot=2` and a `file = "guest_device_" .. slot` option.
+Full recipe, plus why two players can still land in separate matches:
+[Testing with multiple players](https://github.com/widgrensit/asobi/blob/main/guides/testing-multiple-players.md).
+
 ## Multiplayer (entity sync)
 
 The SDK maintains a managed registry of all entities in your current world or match and applies the server's partial diffs for you. Game code listens to high-level callbacks instead of merging diffs by hand:
