@@ -36,6 +36,8 @@ for _, name in ipairs({
 	"tick",
 	"error",
 	"world_terrain",
+	"match_event",
+	"world_event",
 }) do
 	local ok = pcall(function()
 		rt:on(name, function() end)
