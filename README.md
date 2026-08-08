@@ -321,6 +321,38 @@ end)
 
 See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua` (the match-mode loop).
 
+## Server-pushed game events
+
+A Lua game script pushes to clients two ways, and they land on different
+callbacks.
+
+`game.send(player_id, message)` targets one player and arrives as
+`game_message`:
+
+```lua
+client.realtime:on("game_message", function(payload)
+    print(payload.message)
+end)
+```
+
+`game.broadcast(event, payload)` goes to everyone in the match or world. The
+event name is chosen by your script, so it arrives on the catch-all
+`match_event` (or `world_event` from a world script) with the name as the first
+argument:
+
+```lua
+-- server: game.broadcast("players_total", { value = state.players_total })
+client.realtime:on("match_event", function(event, payload)
+    if event == "players_total" then
+        print("players: " .. tostring(payload.value))
+    end
+end)
+```
+
+Events asobi itself broadcasts (`match.state`, `match.finished`, the
+`match.vote_*` family, and so on) keep their own named callbacks and do not
+also fire `match_event`.
+
 ## Extensions (RPC)
 
 Server extensions expose methods over the same socket. Call one with

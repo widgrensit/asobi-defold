@@ -68,6 +68,11 @@ local KNOWN_EVENTS = {
 	entity_updated = true,
 	entity_removed = true,
 	error = true,
+	-- Catch-alls for `game.broadcast(event, payload)` from a Lua match or
+	-- world script. The event name is script-defined, so it can never be a
+	-- named entry in SERVER_EVENTS; these fire with (event_name, payload).
+	match_event = true,
+	world_event = true,
 	tick = true,
 	world_terrain = true,
 }
@@ -636,7 +641,23 @@ function M:_handle_message(raw)
 	end
 
 	local event = SERVER_EVENTS[msg_type]
-	if event then fire(self, event, payload) end
+	if event then
+		fire(self, event, payload)
+		return
+	end
+
+	-- A Lua script's `game.broadcast(name, payload)` reaches the socket as
+	-- `match.<name>` (or `world.<name>` from a world script), where <name> is
+	-- script-defined and so can never appear in SERVER_EVENTS. Without this
+	-- the frame was dropped silently and there was no event name a game could
+	-- even register for.
+	local name = msg_type:match("^match%.(.+)$")
+	if name then
+		fire(self, "match_event", name, payload)
+		return
+	end
+	name = msg_type:match("^world%.(.+)$")
+	if name then fire(self, "world_event", name, payload) end
 end
 
 return M
