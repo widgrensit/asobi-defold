@@ -90,6 +90,35 @@ do
 	check(got and got.err == nil, "empty body is a success no-op")
 end
 
+-- The shared error object. `err.error` used to BE this table, so a callback's
+-- natural tostring(err.error) printed "table: 0x..." and the code was only
+-- reachable by pprint-ing the whole error - which is how asobi#419 got reported.
+print("shared error object -> code and message split out")
+do
+	local err = http._error(
+		{ error = { code = "player.confirmation_failed", message = "Wrong.", details = {} } },
+		403
+	)
+	check(err.code == "player.confirmation_failed", "code is the machine-readable half")
+	check(err.error == "Wrong.", "error is the human message, not a table")
+	check(type(err.error) == "string", "error is printable with tostring")
+	check(err.status_code == 403, "status_code propagated")
+end
+
+print("flat legacy body -> still maps, with no code")
+do
+	local err = http._error({ error = "guest_auth_disabled" }, 403)
+	check(err.error == "guest_auth_disabled", "flat string stays the message")
+	check(err.code == "", "flat body carries no code")
+end
+
+print("no body at all -> a usable error, never nil")
+do
+	local err = http._error(nil, 500)
+	check(err.error == "HTTP 500", "falls back to the status")
+	check(err.code == "", "no code to report")
+end
+
 if failures == 0 then
 	print("OK: all http-handler tests passed")
 	os.exit(0)
