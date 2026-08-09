@@ -58,6 +58,30 @@ function M._refresh_and_retry(client, method, path, url, data, callback)
 	end)
 end
 
+-- asobi answers every failure with a shared error object,
+-- {"error": {"code": ..., "message": ..., "details": {...}}}. `err.error` used
+-- to be that whole table, so the natural `tostring(err.error)` in a callback
+-- printed "table: 0x..." and the code you actually want to branch on was only
+-- reachable by pprint-ing the whole error. `err.error` is now the human
+-- message and `err.code` is the machine-readable half. A flat legacy string
+-- body still maps, and `fields` keeps its place for the form-validation routes.
+function M._error(body, status)
+	local err = {status_code = status, code = "", error = "HTTP " .. status}
+	if type(body) ~= "table" then
+		return err
+	end
+	err.fields = body.fields
+	local e = body.error
+	if type(e) == "table" then
+		if type(e.code) == "string" then err.code = e.code end
+		if type(e.message) == "string" then err.error = e.message end
+		err.details = e.details
+	elseif type(e) == "string" then
+		err.error = e
+	end
+	return err
+end
+
 function M._is_auth_path(path)
 	return string.find(path, "/auth/", 1, true) ~= nil
 end
@@ -112,11 +136,7 @@ function M._handle_response(response, callback)
 		body = decoded
 	end
 	if response.status >= 400 then
-		callback(nil, {
-			status_code = response.status,
-			error = body and body.error or ("HTTP " .. response.status),
-			fields = body and body.fields
-		})
+		callback(nil, M._error(body, response.status))
 	else
 		callback(body, nil)
 	end
