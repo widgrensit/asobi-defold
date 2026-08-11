@@ -10,9 +10,11 @@
 -- device_secret: standard base64 of >=32 random bytes (the server requires this
 --                exact shape; anything shorter is rejected as weak_device_secret).
 --
--- Entropy note: Defold has no CSPRNG in core, so the default RNG is best-effort
--- (seeded math.random) - fine for a persisted guest credential. For higher
--- assurance, pass opts.random_bytes backed by a crypto extension.
+-- Entropy note: on HTML5 the bytes come from the browser's
+-- crypto.getRandomValues (a real CSPRNG) via the `html5` module. Everywhere
+-- else Defold has no CSPRNG in core, so the default RNG is best-effort (seeded
+-- math.random) - fine for a persisted guest credential. For higher assurance,
+-- pass opts.random_bytes backed by a crypto extension.
 
 local M = {}
 
@@ -64,15 +66,83 @@ local function ptr_entropy()
 	return acc
 end
 
+-- Lua 5.1 - which is what Defold runs on HTML5 - implements math.randomseed as
+-- srand((int)x), so any seed above INT32_MAX is narrowed on the way in. Under
+-- wasm that out-of-range double->int32 conversion saturates rather than wraps,
+-- which pinned every browser to one constant seed: two tabs minted the SAME
+-- device_id and collapsed into a single guest, so a 2-player match could never
+-- fill. Keeping the mixed value inside int32 means the seed survives the
+-- narrowing intact.
+--
+-- This path is never reached on web: there the bytes come from
+-- crypto.getRandomValues, and if that is missing we raise rather than fall
+-- through, because under wasm ptr_entropy() is a no-op (no ASLR) and os.clock()
+-- barely moves this early in startup - the seed would degrade to whole seconds
+-- and two tabs opened in the same second would collide again.
+local SEED_MOD = 2147483647
+
+local function mix(acc, value)
+	return (acc * 31 + value) % SEED_MOD
+end
+
+local function compute_seed()
+	local t = mix(os.time() % SEED_MOD, ptr_entropy())
+	t = mix(t, math.floor((os.clock() * 1000000) % SEED_MOD))
+	if socket and socket.gettime then
+		t = mix(t, math.floor((socket.gettime() * 1000000) % SEED_MOD))
+	end
+	return t
+end
+
+-- Browser builds expose the `html5` module, so on web the bytes come from
+-- crypto.getRandomValues. Returns nil off web, leaving the caller on the
+-- math.random path; on web it either returns bytes or raises.
+--
+-- The JS catches its own errors and returns "" rather than throwing, because a
+-- JS exception crossing the wasm boundary is not reliably catchable by pcall -
+-- it can abort the engine instead. An empty string fails the length check and
+-- becomes the Lua-side error below.
+--
+-- Raising matches asobi-js, which throws when Web Crypto is absent. Every
+-- browser has had crypto.getRandomValues since 2013, including in insecure
+-- contexts and workers, so this is close to unreachable - and a hard failure a
+-- dev can fix with opts.random_bytes beats silently minting a credential that
+-- merges strangers into one account.
+local function web_random_bytes(n)
+	if not (html5 and html5.run) then
+		return nil
+	end
+	local js = ("(function(){try{var a=new Uint8Array(%d);(self.crypto||self.msCrypto)"):format(n)
+		.. ".getRandomValues(a);return Array.prototype.map.call(a,function(b){"
+		-- Array.prototype.map.call, NOT a.map: Uint8Array.prototype.map returns a
+		-- typed array, which would coerce each hex pair back to 0 and yield a
+		-- full-length all-zero "secret" that passes every check below.
+		.. "return (b<16?'0':'')+b.toString(16)}).join('')}catch(e){return ''}})()"
+	local ok, hex = pcall(html5.run, js)
+	if not ok or type(hex) ~= "string" or #hex ~= n * 2 then
+		error("asobi.device: no Web Crypto available; pass opts.random_bytes", 0)
+	end
+	local out = {}
+	for i = 1, #hex, 2 do
+		local byte = tonumber(hex:sub(i, i + 1), 16)
+		-- tonumber("-1", 16) is -1, and string.char would raise on it.
+		if not byte or byte < 0 or byte > 255 then
+			error("asobi.device: no Web Crypto available; pass opts.random_bytes", 0)
+		end
+		out[#out + 1] = string.char(byte)
+	end
+	return table.concat(out)
+end
+
 local seeded = false
 local function default_random_bytes(n)
+	local web = web_random_bytes(n)
+	if web then
+		return web
+	end
 	if not seeded then
 		seeded = true
-		local t = (os.time() % 1000000) * 1000000 + ptr_entropy()
-		if socket and socket.gettime then
-			t = t + math.floor((socket.gettime() * 1000000) % 1000000)
-		end
-		math.randomseed(t)
+		math.randomseed(compute_seed())
 	end
 	local t = {}
 	for i = 1, n do
@@ -100,6 +170,11 @@ end
 
 local SAVE_APP = "asobi"
 local SAVE_FILE = "guest_device"
+-- Bumped when a stored pair can no longer be trusted. v1 pairs minted by a web
+-- build came from the constant seed described above, so on web every install
+-- holds the SAME id and resumes one shared guest - re-minting is the only way
+-- an already-affected player ever becomes their own account again.
+local SAVE_VERSION = 2
 
 local function save_path(opts)
 	if not sys then
@@ -109,11 +184,25 @@ local function save_path(opts)
 end
 
 local function valid(d)
-	return type(d) == "table"
-		and type(d.device_id) == "string"
-		and d.device_id ~= ""
-		and type(d.device_secret) == "string"
-		and d.device_secret ~= ""
+	if
+		not (
+			type(d) == "table"
+			and type(d.device_id) == "string"
+			and d.device_id ~= ""
+			and type(d.device_secret) == "string"
+			and d.device_secret ~= ""
+		)
+	then
+		return false
+	end
+	-- Scoped to web on purpose: the collision was a wasm-only RNG defect, so a
+	-- native install's unversioned pair is unique and keeping it preserves that
+	-- player's guest account. Discarding it everywhere would log out players who
+	-- were never affected.
+	if html5 and d.version ~= SAVE_VERSION then
+		return false
+	end
+	return true
 end
 
 -- Load the persisted pair, or generate + persist one on first run. Returns
@@ -133,7 +222,7 @@ function M.load_or_create(opts)
 	-- Best-effort: if the save fails (full disk, sandbox), the caller still gets
 	-- a usable pair for this session, but warn - a lost write means a different
 	-- guest next launch.
-	if sys.save(path, { device_id = id, device_secret = secret }) == false then
+	if sys.save(path, { version = SAVE_VERSION, device_id = id, device_secret = secret }) == false then
 		print("[asobi] warning: could not persist guest device credentials; a new guest may be created next launch")
 	end
 	return id, secret

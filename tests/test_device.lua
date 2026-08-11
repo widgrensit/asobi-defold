@@ -152,6 +152,150 @@ do
 end
 
 -- --------------------------------------------------------------------
+-- Regression cases for the HTML5 shared-guest bug. Two independent defects:
+-- the seed was ~200x INT32_MAX and saturated to a constant under wasm (Lua 5.1
+-- narrows it via srand((int)x)), and the colliding pair was then persisted, so
+-- affected installs keep resuming the one shared guest until they re-mint.
+-- The module memoises "the RNG is seeded", so each case needs fresh state.
+-- --------------------------------------------------------------------
+local function fresh_device(html5_run)
+	package.loaded["asobi.device"] = nil
+	_G.html5 = html5_run and { run = html5_run } or nil
+	return require("asobi.device")
+end
+
+print("web build sources bytes from crypto.getRandomValues")
+do
+	local asked
+	local d = fresh_device(function(js)
+		asked = js
+		-- Stand in for the browser: 0x00..0x(n-1) as a hex string.
+		local n = tonumber(js:match("Uint8Array%((%d+)%)"))
+		local hex = {}
+		for i = 1, n do hex[i] = string.format("%02x", (i - 1) % 256) end
+		return table.concat(hex)
+	end)
+	local _, secret = d.generate()
+	check(asked ~= nil and asked:find("getRandomValues", 1, true) ~= nil,
+		"generate called crypto.getRandomValues via html5.run")
+	check(asked ~= nil and asked:find("catch", 1, true) ~= nil,
+		"injected JS catches its own errors instead of throwing into Lua")
+	local bytes = b64_decode(secret)
+	check(bytes and #bytes == 32, "browser-sourced secret decodes to 32 bytes")
+	local from_crypto = bytes and bytes[1] == 0 and bytes[2] == 1 and bytes[3] == 2
+	check(from_crypto, "secret bytes came from the browser CSPRNG, not math.random")
+end
+
+-- On web the seeded RNG is NOT an acceptable fallback (it degrades to
+-- whole-second granularity under wasm), so every unusable browser response
+-- must raise rather than quietly mint a weak credential. `print` is compiled
+-- out of Defold release bundles, so a warning here would be invisible on the
+-- platform it targets - matching asobi-js, which throws.
+local BAD_CRYPTO_RESPONSES = {
+	["html5.run raised"] = function() error("no crypto in this context") end,
+	["a garbage string"] = function() return "not-hex" end,
+	["well-formed hex of the wrong length"] = function() return string.rep("ab", 16) end,
+	["an empty string (the JS catch path)"] = function() return "" end,
+	["a non-string"] = function() return 42 end,
+	["hex that would crash string.char"] = function(js)
+		local n = tonumber(js:match("Uint8Array%((%d+)%)"))
+		return "-1" .. string.rep("ff", n - 1) -- tonumber("-1", 16) == -1
+	end,
+}
+
+print("web build raises rather than degrading to the seeded RNG")
+do
+	for label, run in pairs(BAD_CRYPTO_RESPONSES) do
+		local d = fresh_device(run)
+		local ok, err = pcall(d.generate)
+		check(not ok, "raised on " .. label)
+		check(not ok and tostring(err):find("Web Crypto", 1, true) ~= nil,
+			"error names the cause for " .. label .. ": " .. tostring(err))
+	end
+end
+
+print("opts.random_bytes rescues a browser with no Web Crypto")
+do
+	local d = fresh_device(function() return "" end)
+	local fixed = string.rep("A", 32)
+	local ok, _, secret = pcall(function()
+		return d.generate({ random_bytes = function(n) return fixed:sub(1, n) end })
+	end)
+	check(ok, "an explicit source is used without ever touching html5.run")
+	check(ok and secret ~= nil, "and still returns a secret")
+end
+
+print("an explicit random_bytes source still wins over the browser CSPRNG")
+do
+	local d = fresh_device(function() return string.rep("ff", 64) end)
+	local fixed = string.rep("A", 32)
+	local _, secret = d.generate({ random_bytes = function(n) return fixed:sub(1, n) end })
+	local bytes = b64_decode(secret)
+	local all_a = bytes ~= nil
+	for _, b in ipairs(bytes or {}) do if b ~= 0x41 then all_a = false end end
+	check(all_a, "opts.random_bytes is not overridden by the html5 path")
+end
+
+-- Stubs the real boundary rather than an exposed helper, so the check fails if
+-- the seed stops being clamped OR if the clamping stops being on the path
+-- generate() actually takes.
+print("the native seeded path seeds inside int32")
+do
+	local d = fresh_device(nil)
+	local captured
+	local real_seed = math.randomseed
+	-- luacheck: push ignore 122
+	math.randomseed = function(s) captured = s; return real_seed(s) end
+	d.generate()
+	math.randomseed = real_seed
+	-- luacheck: pop
+	check(captured ~= nil, "default_random_bytes seeded the RNG")
+	check(captured ~= nil and captured == math.floor(captured), "the seed is an integer")
+	check(captured ~= nil and captured >= 0 and captured <= 2147483647,
+		"the seed it passed survives srand((int)x) (got " .. tostring(captured) .. ")")
+end
+
+-- The bug's real persistence: an affected browser has the shared pair in
+-- IndexedDB, and without this it would resume that guest forever.
+print("a stored pre-fix pair is discarded on web so the install re-mints")
+do
+	reset()
+	local shared = { device_id = "the-shared-one", device_secret = "old-secret" }
+	saved_store["asobi/guest_device"] = shared
+
+	local web = fresh_device(function(js)
+		local n = tonumber(js:match("Uint8Array%((%d+)%)"))
+		return string.rep("7f", n)
+	end)
+	local id = select(1, web.load_or_create())
+	check(id ~= "the-shared-one", "unversioned pair rejected on web, a fresh id was minted")
+	check(saved_store["asobi/guest_device"].version ~= nil, "the replacement is versioned")
+
+	-- Same stored blob, native: that install was never affected and must keep
+	-- its account rather than being silently logged out.
+	saved_store["asobi/guest_device"] = shared
+	local native = fresh_device(nil)
+	check(select(1, native.load_or_create()) == "the-shared-one",
+		"the same unversioned pair is still honoured off web")
+end
+
+print("a versioned pair resumes normally on web")
+do
+	reset()
+	local web = fresh_device(function(js)
+		local n = tonumber(js:match("Uint8Array%((%d+)%)"))
+		return string.rep("7f", n)
+	end)
+	local id1, secret1 = web.load_or_create()
+	local id2, secret2 = web.load_or_create()
+	check(id1 == id2 and secret1 == secret2, "second load resumes the pair it just minted")
+end
+
+-- Restore the plain, non-web module for the remaining cases.
+package.loaded["asobi.device"] = nil
+_G.html5 = nil
+
+-- --------------------------------------------------------------------
 print("auth.guest_device loads/persists creds and forwards to guest")
 do
 	reset()

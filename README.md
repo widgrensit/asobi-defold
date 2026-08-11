@@ -229,11 +229,25 @@ client.auth.guest_device(client, {
 }, function(data, err) ... end)
 ```
 
-The default RNG is best-effort seeded `math.random` (Defold has no core CSPRNG) —
-acceptable for a guest credential that is generated once and stored, but **for
-production you should pass `random_bytes` backed by a crypto extension** so the
-secret is cryptographically random. A custom `random_bytes(n)` must return at
-least `n` bytes (the helper asserts this). If you want to manage
+On **HTML5** the bytes come from the browser's `crypto.getRandomValues` via the
+`html5` module, so web builds get a real CSPRNG with no extra setup. If that
+call is unavailable the helper raises rather than falling back — on web the
+seeded RNG below is not random enough to keep two browsers apart, and a shared
+`device_id` means two players sharing one account. Pass `random_bytes` to
+override if you hit this.
+
+**Upgrading a web build:** credentials stored by v1.13.0 or earlier are
+discarded on first launch, because a seeding bug in those versions gave every
+browser the same `device_id`. Affected players get a fresh guest; the account
+they had was shared with every other web player of that game, so it was never
+solely theirs. Native builds are unaffected and keep their stored pair.
+
+On every other platform the default RNG is best-effort seeded `math.random`
+(Defold has no core CSPRNG) — acceptable for a guest credential that is
+generated once and stored, but **for production you should pass `random_bytes`
+backed by a crypto extension** so the secret is cryptographically random. A
+custom `random_bytes(n)` must return at least `n` bytes (the helper asserts
+this). If you want to manage
 storage yourself (e.g. an OS keychain), keep using `guest(client, id, secret, …)`
 directly — `asobi.device.generate()` / `asobi.device.load_or_create()` are also
 exposed if you want just the pieces.
