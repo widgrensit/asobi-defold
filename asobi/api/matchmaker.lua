@@ -9,7 +9,6 @@ function M.add(client, opts, callback)
 	elseif type(opts) == "table" then
 		body.mode = opts.mode or "default"
 		if opts.properties then body.properties = opts.properties end
-		if opts.party then body.party = opts.party end
 	end
 	http_mod.post(client, "/api/v1/matchmaker", body, callback)
 end
