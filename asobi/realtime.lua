@@ -227,7 +227,6 @@ function M:add_to_matchmaker(opts)
 		check_positional_mode("add_to_matchmaker", opts)
 		payload.mode = opts.mode or "default"
 		if opts.properties then payload.properties = opts.properties end
-		if opts.party then payload.party = opts.party end
 	end
 	self:_send("matchmaker.add", payload)
 end
