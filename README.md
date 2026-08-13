@@ -8,7 +8,7 @@ Add the SDK and the WebSocket extension to your `game.project`:
 
 ```
 [project]
-dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.7.0.zip
+dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.16.0.zip
 dependencies#1 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.2.zip
 ```
 
@@ -370,6 +370,101 @@ end)
 
 See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua` (the match-mode loop).
 
+### Client-side prediction
+
+World-mode only. Stamp each input with your own increasing `seq` and the server
+acks the highest `seq` it has consumed for you, so you can apply inputs locally
+straight away and replay the unacked ones on top of the authoritative state.
+
+Needs asobi-defold >= v1.16.0 and an asobi server >= v0.84.0.
+
+`send_world_input(input, seq)` takes the sequence number as an optional second
+positional argument - a number, not a field inside `input`. On the wire it rides
+as a top-level sibling of `payload`, never nested in it:
+
+```json
+{"type": "world.input", "seq": 412, "payload": {"kind": "move", "x": 600, "y": 480}}
+```
+
+The ack comes back on the typed `world_ack` callback, which fires with one
+argument, a table shaped `{tick, seq}`:
+
+```lua
+client.realtime:on("world_ack", function(payload)
+    print(payload.seq .. " consumed as of tick " .. payload.tick)
+end)
+```
+
+Keep a monotonic counter, buffer every predicted input under its `seq`, and on
+each ack drop the buffered inputs at or below `payload.seq` and re-apply the
+remainder on top of the authoritative state. That state is
+`client.realtime.entities`. Every zone subscription opens with a full `op:"a"`
+snapshot of that zone, including each crossing into a new zone; the `world.tick`
+frames in between carry deltas. The registry is the accumulated result of both,
+so reconcile against it rather than against any single payload. `apply_local` and
+`set_local` below are your own functions: move the sprite, snap the sprite:
+
+```lua
+local seq, pending = 0, {}
+
+local function move(input)
+    seq = seq + 1
+    pending[#pending + 1] = {seq = seq, input = input}
+    apply_local(input)
+    client.realtime:send_world_input(input, seq)
+end
+
+client.realtime:on("world_ack", function(payload)
+    local rest = {}
+    for i = 1, #pending do
+        if pending[i].seq > payload.seq then rest[#rest + 1] = pending[i] end
+    end
+    pending = rest
+    local state = client.realtime.entities[client.realtime.local_player_id]
+    if not state then return end
+    set_local(state)
+    for i = 1, #pending do apply_local(pending[i].input) end
+end)
+```
+
+`state` is the registry's own table, not a copy, so read it and do not mutate it.
+
+- **Opt-in.** The server acks only connections that stamped a `seq`. Register
+  `world_ack` but never pass a `seq` and the callback simply never fires, with no
+  error. Omitting `seq` is otherwise safe: the frame carries no `seq` key and
+  pre-prediction callers are unaffected.
+- **The ack is a high-water mark**, not one ack per input: it carries the highest
+  `seq` consumed as of `tick`. A rejected input still advances it, so an input the
+  game declines never strands the client.
+- `seq` must be a non-negative integer below 2^53. The SDK does not validate it,
+  and the server ignores the seq, not the input: anything out of range degrades to
+  no seq at all, so the input is still queued and applied to the world exactly as
+  normal and only its acknowledgement is skipped. Nor does the ack stream go
+  silent. If a valid seq was already recorded for you, the server keeps sending
+  `world.ack` every broadcast tick carrying the old high-water mark, it simply
+  stops advancing.
+- **Never snapshot one callback payload as the authoritative state.** An entity's
+  first delta is an add, which fires `entity_added`, not `entity_updated`, and a
+  subscription snapshot is all adds. Seed from `entity_updated` alone and an early
+  ack reconciles against nothing. The registry merges all three ops for you.
+- `payload.tick` is the broadcast tick the ack was sent on. Not every ack has a
+  `world.tick` in front of it: a broadcast that changed nothing sends the ack
+  alone. When the broadcast does carry entity changes, the `world.tick` goes first
+  and the `world.ack` second, the latter to your connection alone rather than to
+  the zone, so the registry is already current when the ack lands. Prune the buffer
+  and replay from the `world_ack` callback, never from a tick handler.
+- The ack rides the zone broadcast, so set `broadcast_interval` to `1` in the world
+  mode config for an ack every tick (default `3`). See
+  [World server](https://asobi.dev/docs/world-server).
+- Older servers never send `world.ack` and the client sees silence, not an error.
+  Older SDKs differ. From v1.6.0 to v1.15.0, `client.realtime:on("world_ack", ...)`
+  raises at register time:
+  `asobi: unknown event "world_ack" - a callback registered for it would never fire`.
+  Before v1.6.0 it registers a callback that never fires.
+
+Full frame reference:
+[Client-side prediction](https://asobi.dev/docs/protocols/websocket#client-side-prediction).
+
 ## Server-pushed game events
 
 A Lua game script pushes to clients two ways, and they land on different
@@ -400,7 +495,9 @@ end)
 
 Events asobi itself broadcasts (`match.state`, `match.finished`, the
 `match.vote_*` family, and so on) keep their own named callbacks and do not
-also fire `match_event`.
+also fire `match_event`. The same holds for `world_event`: `world.ack` arrives
+only on the named `world_ack` callback, see
+[Client-side prediction](#client-side-prediction).
 
 ## Extensions (RPC)
 
@@ -430,7 +527,7 @@ Branch on `err.code`; `message` is for humans and may be reworded at any time.
 
 - **Auth** - Register, login, guest (anonymous), guest upgrade, token refresh
 - **Players** - Profiles, updates
-- **Worlds** - List, create, find-or-create, join, leave, input, entity sync
+- **Worlds** - List, create, find-or-create, join, leave, input, entity sync, prediction ack
 - **Matchmaker** - Queue, status, cancel
 - **Matches** - List, join, details
 - **Leaderboards** - Top scores, around player, submit
