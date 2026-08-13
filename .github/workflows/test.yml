@@ -59,6 +59,9 @@ jobs:
       - name: Run module.event dispatch + multi-handler tests
         run: lua5.4 tests/test_module_event.lua
 
+      - name: Run world.ack dispatch + world.input seq tests
+        run: lua5.4 tests/test_world_ack.lua
+
       - name: Run broadcast event tests
         run: lua5.4 tests/test_broadcast_event.lua
 

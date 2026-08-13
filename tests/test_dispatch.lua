@@ -171,6 +171,7 @@ local EXPECTED = {
 	["world.left"] = "world_left",
 	["world.phase_changed"] = "phase_changed",
 	["world.finished"] = "world_finished",
+	["world.ack"] = "world_ack",
 }
 
 local fail_count = 0
