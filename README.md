@@ -401,12 +401,13 @@ it: the acks you receive are not monotonic, so pruning against a stale one
 re-applies inputs the server has already consumed (see the per-zone caveat
 below). On an ack that does advance the mark, drop the buffered inputs at or
 below it and re-apply the remainder on top of the authoritative state. That state
-is `client.realtime.entities`. A zone sends a full `op:"a"` snapshot of itself the
-first time you subscribe to it, so joining a world delivers one frame per loaded,
-non-empty zone in your interest ring; the `world.tick` frames after that carry
-deltas. The registry is the accumulated result of both, so reconcile against it
-rather than against any single payload. `apply_local` and `set_local` below are
-your own functions: move the sprite, snap the sprite:
+is `client.realtime.entities`. A zone sends a full `op:"a"` snapshot of itself on
+every subscription that is new to it, meaning every time you were not already one
+of its subscribers, so joining a world delivers one frame per loaded, non-empty
+zone in your interest ring; the `world.tick` frames after that carry deltas. The
+registry is the accumulated result of both, so reconcile against it rather than
+against any single payload. `apply_local` and `set_local` below are your own
+functions: move the sprite, snap the sprite:
 
 ```lua
 local seq, pending, acked = 0, {}, -1
@@ -447,7 +448,7 @@ end)
   to nine of them (fewer at a grid edge), not to the one zone you stand in, and
   each subscribed zone records and acks your highest consumed `seq`
   independently. Once you have moved you get more than one `world.ack` per
-  broadcast round, one from each subscribed zone holding a recorded seq for you,
+  broadcast tick, one from each subscribed zone holding a recorded seq for you,
   and a zone you moved away from keeps emitting its own frozen mark. Consecutive
   `payload.seq` values can therefore decrease, and nothing in the frame says which
   zone sent it. This is why the sample keeps a running maximum: "drop everything at
@@ -460,18 +461,24 @@ end)
   no seq at all, so the input is still queued and applied to the world exactly as
   normal and only its acknowledgement is skipped. Nor does the ack stream go
   silent. If a valid seq was already recorded for you, the zone keeps sending
-  `world.ack` on every broadcast of its own carrying the old high-water mark, it
-  simply stops advancing.
+  `world.ack` on every broadcast, carrying the old high-water mark, it simply
+  stops advancing.
 - **Never snapshot one callback payload as the authoritative state.** An entity's
   first delta is an add, which fires `entity_added`, not `entity_updated`, and a
   subscription snapshot is all adds. Seed from `entity_updated` alone and an early
   ack reconciles against nothing. The registry merges all three ops for you.
-- **A crossing is not a re-snapshot.** A snapshot arrives only when a zone enters
-  your interest ring for the first time, and at `view_radius` 1 the zone you step
-  into was already in the ring, so a one-step crossing usually delivers no new
-  snapshot at all. Subscribing to a zone that holds no entities sends nothing
-  either. A zone dropping out of the ring sends an `op:"r"` for each of its
-  entities, which the registry applies as removals.
+- **A crossing does re-snapshot.** Stepping into a new zone recomputes the ring.
+  The band of zones that just entered it is subscribed, and each of those replays
+  a full `op:"a"` snapshot; the band that just left is unsubscribed and sends an
+  `op:"r"` for each of its entities, which the registry applies as removals. Only
+  the destination zone itself stays quiet, because at `view_radius` 1 it was
+  already a ring neighbour and re-subscribing an existing subscriber is a no-op.
+  Do not read that one no-op as a quiet crossing. Nor is the snapshot a
+  once-per-zone event: leaving the ring unsubscribes you, so a player oscillating
+  across a boundary re-subscribes and re-snapshots on every step. A zone that
+  holds no entities skips the entity snapshot, but the terrain push is separate
+  and unconditional, so a world with a terrain provider still delivers that zone's
+  chunk on `world_terrain`.
 - `payload.tick` is the broadcast tick the ack was sent on. Not every ack has a
   `world.tick` in front of it: a broadcast that changed nothing sends the ack
   alone. When that zone's broadcast does carry entity changes, its `world.tick`
@@ -479,10 +486,12 @@ end)
   the ack lands. The ack is addressed to you alone rather than fanned out to the
   zone, so it never leaks one player's input stream to the rest. Prune the buffer
   and replay from the `world_ack` callback, never from a tick handler.
-- The ack rides a zone's broadcast, and `broadcast_interval` gates each zone
-  independently, so a client in a nine-zone ring is fed by nine independently
-  gated broadcasts rather than one stream. Set `broadcast_interval` to `1` in the
-  world mode config for an ack on every tick (default `3`). See
+- The ack rides a zone's broadcast, but the zones are not on independent
+  schedules. One ticker per world fans a single tick number out to every zone, and
+  `broadcast_interval` is one world-level value copied into each of them, so the
+  several acks a multi-zone subscriber receives arrive together on the same
+  broadcast tick and carry the same `payload.tick`. Set `broadcast_interval` to
+  `1` in the world mode config for an ack on every tick (default `3`). See
   [World server](https://asobi.dev/docs/world-server).
 - Older servers never send `world.ack` and the client sees silence, not an error.
   Older SDKs differ. From v1.6.0 to v1.15.0, `client.realtime:on("world_ack", ...)`
