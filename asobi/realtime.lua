@@ -37,6 +37,11 @@ local SERVER_EVENTS = {
 	-- drops dev-console output from a server on the current naming.
 	["module.message"] = "game_message",
 	["module.error"] = "game_error",
+	-- A named push from an extension: {module, event, data}. Unlike the
+	-- message/error twins above it has no game.* counterpart, so it is a
+	-- single frame and must NOT go in EXTENSION_FRAME_DIALECT. The app reads
+	-- payload.event and payload.data to route.
+	["module.event"] = "module_event",
 	["vote.cast_ok"] = "vote_cast_ok",
 	["vote.veto_ok"] = "vote_veto_ok",
 	["world.tick"] = "world_tick",
@@ -95,6 +100,10 @@ end
 -- Validated at register time: a typo'd name is a callback that silently
 -- never fires, which is indistinguishable from the server not sending the
 -- event. Failing here points at the offending line instead.
+--
+-- Appends rather than assigns: a plain `callbacks[event] = cb` silently
+-- clobbers an earlier handler, so two systems that both listen for the same
+-- event can never coexist. Handlers fire in registration order.
 function M:on(event, callback)
 	if not KNOWN_EVENTS[event] then
 		error(
@@ -103,12 +112,20 @@ function M:on(event, callback)
 			2
 		)
 	end
-	self.callbacks[event] = callback
+	local handlers = self.callbacks[event]
+	if not handlers then
+		handlers = {}
+		self.callbacks[event] = handlers
+	end
+	handlers[#handlers + 1] = callback
 end
 
 local function fire(self, event, ...)
-	local cb = self.callbacks[event]
-	if cb then cb(...) end
+	local handlers = self.callbacks[event]
+	if not handlers then return end
+	for i = 1, #handlers do
+		handlers[i](...)
+	end
 end
 
 function M:connect()

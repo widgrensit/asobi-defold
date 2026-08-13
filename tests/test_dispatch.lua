@@ -135,6 +135,7 @@ local EXPECTED = {
 	["rpc.error"] = CORRELATED,
 	["module.message"] = "game_message",
 	["module.error"] = "game_error",
+	["module.event"] = "module_event",
 	["error"] = "error",
 	["session.connected"] = "connected",
 	["session.heartbeat"] = "heartbeat",

@@ -56,6 +56,9 @@ jobs:
       - name: Run extension frame dedupe tests
         run: lua5.4 tests/test_extension_frame_dedupe.lua
 
+      - name: Run module.event dispatch + multi-handler tests
+        run: lua5.4 tests/test_module_event.lua
+
       - name: Run broadcast event tests
         run: lua5.4 tests/test_broadcast_event.lua
 
