@@ -45,12 +45,12 @@ do
 
 	local rt = client.realtime
 	check(rt.callbacks["matchmaker_queued"] == nil, "no on_queued -> no matchmaker_queued handler")
-	check(type(rt.callbacks["connected"]) == "function", "registers a connected handler before connect")
+	check(type(rt.callbacks["connected"][1]) == "function", "registers a connected handler before connect")
 
 	-- capture the queue send, then simulate the server confirming the session
 	local sent = {}
 	rt._send = function(_self, mtype, payload) sent[#sent + 1] = {mtype = mtype, payload = payload} end
-	rt.callbacks["connected"]()
+	rt.callbacks["connected"][1]()
 	check(#sent == 1 and sent[1].mtype == "matchmaker.add", "queues via matchmaker.add on connect")
 	check(sent[1] and sent[1].payload.mode == "arena", "queues the requested mode")
 end
@@ -66,13 +66,13 @@ do
 		on_failed = function(p) failed = p end,
 	})
 	local rt = client.realtime
-	check(type(rt.callbacks["matchmaker_queued"]) == "function", "on_queued -> matchmaker_queued handler")
-	check(type(rt.callbacks["match_matched"]) == "function", "on_matched -> match_matched handler")
-	check(type(rt.callbacks["matchmaker_failed"]) == "function", "on_failed -> matchmaker_failed handler")
-	check(type(rt.callbacks["error"]) == "function", "on_failed also covers error")
+	check(type(rt.callbacks["matchmaker_queued"][1]) == "function", "on_queued -> matchmaker_queued handler")
+	check(type(rt.callbacks["match_matched"][1]) == "function", "on_matched -> match_matched handler")
+	check(type(rt.callbacks["matchmaker_failed"][1]) == "function", "on_failed -> matchmaker_failed handler")
+	check(type(rt.callbacks["error"][1]) == "function", "on_failed also covers error")
 
 	-- a transport error routes through the error handler to on_failed with a reason
-	rt.callbacks["error"]({error = "socket boom"})
+	rt.callbacks["error"][1]({error = "socket boom"})
 	check(failed and failed.reason == "socket boom", "error event maps to on_failed reason")
 end
 
