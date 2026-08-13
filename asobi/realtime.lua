@@ -51,6 +51,10 @@ local SERVER_EVENTS = {
 	["world.left"] = "world_left",
 	["world.phase_changed"] = "phase_changed",
 	["world.finished"] = "world_finished",
+	-- Client-side-prediction ack {tick, seq}. A named entry so it dispatches
+	-- as the typed `world_ack` callback ahead of the generic world.* catch-all,
+	-- which would otherwise surface it untyped as world_event "ack".
+	["world.ack"] = "world_ack",
 }
 
 -- The two extension frames the server emits in both dialects, mapped to the
@@ -380,8 +384,13 @@ function M:join_or_host(mode, callback)
 	self:find_or_create_world(mode, callback)
 end
 
-function M:send_world_input(input)
-	self:_send_fire_and_forget("world.input", input)
+-- `seq` is an optional client input sequence number for prediction and
+-- reconciliation. When given it rides as a top-level sibling of payload
+-- ({type, seq, payload}), kept numeric so the server can match it against the
+-- world.ack it echoes back. Omitted when nil, so pre-prediction callers are
+-- unaffected.
+function M:send_world_input(input, seq)
+	self:_send_fire_and_forget("world.input", input, seq)
 end
 
 function M:leave_world()
@@ -409,10 +418,11 @@ function M:_send_with_callback(msg_type, payload, callback)
 	websocket.send(self.connection, msg, {type = websocket.DATA_TYPE_TEXT})
 end
 
-function M:_send_fire_and_forget(msg_type, payload)
+function M:_send_fire_and_forget(msg_type, payload, seq)
 	if not self.connection then return end
-	local msg = json.encode({type = msg_type, payload = payload})
-	websocket.send(self.connection, msg, {type = websocket.DATA_TYPE_TEXT})
+	local frame = {type = msg_type, payload = payload}
+	if seq ~= nil then frame.seq = seq end
+	websocket.send(self.connection, json.encode(frame), {type = websocket.DATA_TYPE_TEXT})
 end
 
 -- Applies one server Delta to the managed entity registry, returning
