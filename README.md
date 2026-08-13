@@ -8,7 +8,7 @@ Add the SDK and the WebSocket extension to your `game.project`:
 
 ```
 [project]
-dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.7.0.zip
+dependencies#0 = https://github.com/widgrensit/asobi-defold/archive/refs/tags/v1.16.0.zip
 dependencies#1 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.2.zip
 ```
 
@@ -370,6 +370,138 @@ end)
 
 See `example/multiplayer.lua` (world-mode entity sync) and `example/example.lua` (the match-mode loop).
 
+### Client-side prediction
+
+World-mode only. Stamp each input with your own increasing `seq` and the server
+acks the highest `seq` it has consumed for you, so you can apply inputs locally
+straight away and replay the unacked ones on top of the authoritative state.
+
+Needs asobi-defold >= v1.16.0 and an asobi server >= v0.84.0.
+
+`send_world_input(input, seq)` takes the sequence number as an optional second
+positional argument - a number, not a field inside `input`. On the wire it rides
+as a top-level sibling of `payload`, never nested in it:
+
+```json
+{"type": "world.input", "seq": 412, "payload": {"kind": "move", "x": 600, "y": 480}}
+```
+
+The ack comes back on the typed `world_ack` callback, which fires with one
+argument, a table shaped `{tick, seq}`:
+
+```lua
+client.realtime:on("world_ack", function(payload)
+    print(payload.seq .. " consumed as of tick " .. payload.tick)
+end)
+```
+
+Keep a monotonic counter and buffer every predicted input under its `seq`. Keep a
+running maximum of the acked `seq` too, and ignore any ack that does not exceed
+it: the acks you receive are not monotonic, so pruning against a stale one
+re-applies inputs the server has already consumed (see the per-zone caveat
+below). On an ack that does advance the mark, drop the buffered inputs at or
+below it and re-apply the remainder on top of the authoritative state. That state
+is `client.realtime.entities`. A zone sends a full `op:"a"` snapshot of itself on
+every subscription that is new to it, meaning every time you were not already one
+of its subscribers, so joining a world delivers one frame per loaded, non-empty
+zone in your interest ring; the `world.tick` frames after that carry deltas. The
+registry is the accumulated result of both, so reconcile against it rather than
+against any single payload. `apply_local` and `set_local` below are your own
+functions: move the sprite, snap the sprite:
+
+```lua
+local seq, pending, acked = 0, {}, -1
+
+local function move(input)
+    seq = seq + 1
+    pending[#pending + 1] = {seq = seq, input = input}
+    apply_local(input)
+    client.realtime:send_world_input(input, seq)
+end
+
+client.realtime:on("world_ack", function(payload)
+    if payload.seq <= acked then return end
+    acked = payload.seq
+    local rest = {}
+    for i = 1, #pending do
+        if pending[i].seq > acked then rest[#rest + 1] = pending[i] end
+    end
+    pending = rest
+    local state = client.realtime.entities[client.realtime.local_player_id]
+    if not state then return end
+    set_local(state)
+    for i = 1, #pending do apply_local(pending[i].input) end
+end)
+```
+
+`state` is the registry's own table, not a copy, so read it and do not mutate it.
+
+- **Opt-in.** A zone acks only the players it has recorded a `seq` for. Register
+  `world_ack` but never pass a `seq` and the callback simply never fires, with no
+  error. Omitting `seq` is otherwise safe: the frame carries no `seq` key and
+  pre-prediction callers are unaffected.
+- **The ack is a high-water mark**, not one ack per input: it carries the highest
+  `seq` consumed as of `tick`. A rejected input still advances it, so an input the
+  game declines never strands the client.
+- **The mark is per zone, so what you receive can go backwards.** At the default
+  `view_radius` of 1 you are subscribed to the whole 3x3 ring around your zone, up
+  to nine of them (fewer at a grid edge), not to the one zone you stand in, and
+  each subscribed zone records and acks your highest consumed `seq`
+  independently. Once you have moved you get more than one `world.ack` per
+  broadcast tick, one from each subscribed zone holding a recorded seq for you,
+  and a zone you moved away from keeps emitting its own frozen mark. Consecutive
+  `payload.seq` values can therefore decrease, and nothing in the frame says which
+  zone sent it. This is why the sample keeps a running maximum: "drop everything at
+  or below `ack.seq` and replay the rest" is only safe against a mark that never
+  regresses. The server calls this a per-connection ack, which is a known wart,
+  tracked as
+  [widgrensit/asobi#477](https://github.com/widgrensit/asobi/issues/477).
+- `seq` must be a non-negative integer below 2^53. The SDK does not validate it,
+  and the server ignores the seq, not the input: anything out of range degrades to
+  no seq at all, so the input is still queued and applied to the world exactly as
+  normal and only its acknowledgement is skipped. Nor does the ack stream go
+  silent. If a valid seq was already recorded for you, the zone keeps sending
+  `world.ack` on every broadcast, carrying the old high-water mark, it simply
+  stops advancing.
+- **Never snapshot one callback payload as the authoritative state.** An entity's
+  first delta is an add, which fires `entity_added`, not `entity_updated`, and a
+  subscription snapshot is all adds. Seed from `entity_updated` alone and an early
+  ack reconciles against nothing. The registry merges all three ops for you.
+- **A crossing does re-snapshot.** Stepping into a new zone recomputes the ring.
+  The band of zones that just entered it is subscribed, and each of those replays
+  a full `op:"a"` snapshot; the band that just left is unsubscribed and sends an
+  `op:"r"` for each of its entities, which the registry applies as removals. Only
+  the destination zone itself stays quiet, because at `view_radius` 1 it was
+  already a ring neighbour and re-subscribing an existing subscriber is a no-op.
+  Do not read that one no-op as a quiet crossing. Nor is the snapshot a
+  once-per-zone event: leaving the ring unsubscribes you, so a player oscillating
+  across a boundary re-subscribes and re-snapshots on every step. A zone that
+  holds no entities skips the entity snapshot, but the terrain push is separate
+  and unconditional, so a world with a terrain provider still delivers that zone's
+  chunk on `world_terrain`.
+- `payload.tick` is the broadcast tick the ack was sent on. Not every ack has a
+  `world.tick` in front of it: a broadcast that changed nothing sends the ack
+  alone. When that zone's broadcast does carry entity changes, its `world.tick`
+  goes first and its `world.ack` second, so the registry is already current when
+  the ack lands. The ack is addressed to you alone rather than fanned out to the
+  zone, so it never leaks one player's input stream to the rest. Prune the buffer
+  and replay from the `world_ack` callback, never from a tick handler.
+- The ack rides a zone's broadcast, but the zones are not on independent
+  schedules. One ticker per world fans a single tick number out to every zone, and
+  `broadcast_interval` is one world-level value copied into each of them, so the
+  several acks a multi-zone subscriber receives arrive together on the same
+  broadcast tick and carry the same `payload.tick`. Set `broadcast_interval` to
+  `1` in the world mode config for an ack on every tick (default `3`). See
+  [World server](https://asobi.dev/docs/world-server).
+- Older servers never send `world.ack` and the client sees silence, not an error.
+  Older SDKs differ. From v1.6.0 to v1.15.0, `client.realtime:on("world_ack", ...)`
+  raises at register time:
+  `asobi: unknown event "world_ack" - a callback registered for it would never fire`.
+  Before v1.6.0 it registers a callback that never fires.
+
+Full frame reference:
+[Client-side prediction](https://asobi.dev/docs/protocols/websocket#client-side-prediction).
+
 ## Server-pushed game events
 
 A Lua game script pushes to clients two ways, and they land on different
@@ -400,7 +532,9 @@ end)
 
 Events asobi itself broadcasts (`match.state`, `match.finished`, the
 `match.vote_*` family, and so on) keep their own named callbacks and do not
-also fire `match_event`.
+also fire `match_event`. The same holds for `world_event`: `world.ack` arrives
+only on the named `world_ack` callback, see
+[Client-side prediction](#client-side-prediction).
 
 ## Extensions (RPC)
 
@@ -430,7 +564,7 @@ Branch on `err.code`; `message` is for humans and may be reworded at any time.
 
 - **Auth** - Register, login, guest (anonymous), guest upgrade, token refresh
 - **Players** - Profiles, updates
-- **Worlds** - List, create, find-or-create, join, leave, input, entity sync
+- **Worlds** - List, create, find-or-create, join, leave, input, entity sync, prediction ack
 - **Matchmaker** - Queue, status, cancel
 - **Matches** - List, join, details
 - **Leaderboards** - Top scores, around player, submit
