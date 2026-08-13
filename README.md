@@ -395,17 +395,21 @@ client.realtime:on("world_ack", function(payload)
 end)
 ```
 
-Keep a monotonic counter, buffer every predicted input under its `seq`, and on
-each ack drop the buffered inputs at or below `payload.seq` and re-apply the
-remainder on top of the authoritative state. That state is
-`client.realtime.entities`. Every zone subscription opens with a full `op:"a"`
-snapshot of that zone, including each crossing into a new zone; the `world.tick`
-frames in between carry deltas. The registry is the accumulated result of both,
-so reconcile against it rather than against any single payload. `apply_local` and
-`set_local` below are your own functions: move the sprite, snap the sprite:
+Keep a monotonic counter and buffer every predicted input under its `seq`. Keep a
+running maximum of the acked `seq` too, and ignore any ack that does not exceed
+it: the acks you receive are not monotonic, so pruning against a stale one
+re-applies inputs the server has already consumed (see the per-zone caveat
+below). On an ack that does advance the mark, drop the buffered inputs at or
+below it and re-apply the remainder on top of the authoritative state. That state
+is `client.realtime.entities`. A zone sends a full `op:"a"` snapshot of itself the
+first time you subscribe to it, so joining a world delivers one frame per loaded,
+non-empty zone in your interest ring; the `world.tick` frames after that carry
+deltas. The registry is the accumulated result of both, so reconcile against it
+rather than against any single payload. `apply_local` and `set_local` below are
+your own functions: move the sprite, snap the sprite:
 
 ```lua
-local seq, pending = 0, {}
+local seq, pending, acked = 0, {}, -1
 
 local function move(input)
     seq = seq + 1
@@ -415,9 +419,11 @@ local function move(input)
 end
 
 client.realtime:on("world_ack", function(payload)
+    if payload.seq <= acked then return end
+    acked = payload.seq
     local rest = {}
     for i = 1, #pending do
-        if pending[i].seq > payload.seq then rest[#rest + 1] = pending[i] end
+        if pending[i].seq > acked then rest[#rest + 1] = pending[i] end
     end
     pending = rest
     local state = client.realtime.entities[client.realtime.local_player_id]
@@ -429,32 +435,54 @@ end)
 
 `state` is the registry's own table, not a copy, so read it and do not mutate it.
 
-- **Opt-in.** The server acks only connections that stamped a `seq`. Register
+- **Opt-in.** A zone acks only the players it has recorded a `seq` for. Register
   `world_ack` but never pass a `seq` and the callback simply never fires, with no
   error. Omitting `seq` is otherwise safe: the frame carries no `seq` key and
   pre-prediction callers are unaffected.
 - **The ack is a high-water mark**, not one ack per input: it carries the highest
   `seq` consumed as of `tick`. A rejected input still advances it, so an input the
   game declines never strands the client.
+- **The mark is per zone, so what you receive can go backwards.** At the default
+  `view_radius` of 1 you are subscribed to the whole 3x3 ring around your zone, up
+  to nine of them (fewer at a grid edge), not to the one zone you stand in, and
+  each subscribed zone records and acks your highest consumed `seq`
+  independently. Once you have moved you get more than one `world.ack` per
+  broadcast round, one from each subscribed zone holding a recorded seq for you,
+  and a zone you moved away from keeps emitting its own frozen mark. Consecutive
+  `payload.seq` values can therefore decrease, and nothing in the frame says which
+  zone sent it. This is why the sample keeps a running maximum: "drop everything at
+  or below `ack.seq` and replay the rest" is only safe against a mark that never
+  regresses. The server calls this a per-connection ack, which is a known wart,
+  tracked as
+  [widgrensit/asobi#477](https://github.com/widgrensit/asobi/issues/477).
 - `seq` must be a non-negative integer below 2^53. The SDK does not validate it,
   and the server ignores the seq, not the input: anything out of range degrades to
   no seq at all, so the input is still queued and applied to the world exactly as
   normal and only its acknowledgement is skipped. Nor does the ack stream go
-  silent. If a valid seq was already recorded for you, the server keeps sending
-  `world.ack` every broadcast tick carrying the old high-water mark, it simply
-  stops advancing.
+  silent. If a valid seq was already recorded for you, the zone keeps sending
+  `world.ack` on every broadcast of its own carrying the old high-water mark, it
+  simply stops advancing.
 - **Never snapshot one callback payload as the authoritative state.** An entity's
   first delta is an add, which fires `entity_added`, not `entity_updated`, and a
   subscription snapshot is all adds. Seed from `entity_updated` alone and an early
   ack reconciles against nothing. The registry merges all three ops for you.
+- **A crossing is not a re-snapshot.** A snapshot arrives only when a zone enters
+  your interest ring for the first time, and at `view_radius` 1 the zone you step
+  into was already in the ring, so a one-step crossing usually delivers no new
+  snapshot at all. Subscribing to a zone that holds no entities sends nothing
+  either. A zone dropping out of the ring sends an `op:"r"` for each of its
+  entities, which the registry applies as removals.
 - `payload.tick` is the broadcast tick the ack was sent on. Not every ack has a
   `world.tick` in front of it: a broadcast that changed nothing sends the ack
-  alone. When the broadcast does carry entity changes, the `world.tick` goes first
-  and the `world.ack` second, the latter to your connection alone rather than to
-  the zone, so the registry is already current when the ack lands. Prune the buffer
+  alone. When that zone's broadcast does carry entity changes, its `world.tick`
+  goes first and its `world.ack` second, so the registry is already current when
+  the ack lands. The ack is addressed to you alone rather than fanned out to the
+  zone, so it never leaks one player's input stream to the rest. Prune the buffer
   and replay from the `world_ack` callback, never from a tick handler.
-- The ack rides the zone broadcast, so set `broadcast_interval` to `1` in the world
-  mode config for an ack every tick (default `3`). See
+- The ack rides a zone's broadcast, and `broadcast_interval` gates each zone
+  independently, so a client in a nine-zone ring is fed by nine independently
+  gated broadcasts rather than one stream. Set `broadcast_interval` to `1` in the
+  world mode config for an ack on every tick (default `3`). See
   [World server](https://asobi.dev/docs/world-server).
 - Older servers never send `world.ack` and the client sees silence, not an error.
   Older SDKs differ. From v1.6.0 to v1.15.0, `client.realtime:on("world_ack", ...)`
