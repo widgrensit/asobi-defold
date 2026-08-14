@@ -220,7 +220,7 @@ end
 -- world mode), match_capacity_reached (the node-wide cap), or
 -- join_rate_limited. Passing the callback as the second argument works too.
 --
--- Requires an asobi server >= v0.85.0.
+-- Requires an asobi server >= v0.86.0.
 function M:find_or_create_match(mode, opts, callback)
 	if type(opts) == "function" then
 		opts, callback = nil, opts

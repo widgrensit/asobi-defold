@@ -181,7 +181,7 @@ queues the matchmaker.) The other refusals a caller can see are
 mode), and `join_rate_limited` (the same bucket as `match.join` and
 `world.join`).
 
-Requires an asobi server v0.85.0 or later.
+Requires an asobi server v0.86.0 or later.
 
 The older route is to browse by id: list with `list_matches`, join with
 `join_match`. A running match accepts joiners while it is below `max_players`.
