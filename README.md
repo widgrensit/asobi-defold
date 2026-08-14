@@ -153,11 +153,41 @@ See `example/example.lua` for the matchmaker REST + realtime flow.
 > twice to force a match - that submits two tickets and matches the player with
 > themselves.
 
-### Drop into a running match — browse and join
+### Drop into a running match
 
-The matchmaker places you automatically, but a client can also join a match by
-id: browse with `list_matches`, join with `join_match`. A running match accepts
-joiners while `player_count < max_players`, so this is the drop-in flow.
+The matchmaker places you automatically, but a client can also get itself into a
+live match. The one-call route is `find_or_create_match`: join an open match of
+that mode, or spawn one, resolved server-side and serialized so two clients
+calling at the same moment converge on the same match.
+
+```lua
+client.realtime:find_or_create_match("arena", function(info, err)
+    if err then print("join failed: " .. tostring(err)) return end
+    print("joined " .. info.match_id .. " (" .. info.player_count .. "/" .. info.max_players .. ")")
+end)
+```
+
+`mode` is the only parameter; every other match parameter comes from that mode's
+server-side config. It takes the same optional `{ctx = ...}` table `join_match`
+does, and the reply is `match.joined` - the same payload `join_match` resolves
+with.
+
+Eligibility is the mode's `quick_play` flag, which defaults to **false** for
+match modes; a mode that has not opted in is refused with
+`quick_play_disabled`. That is a separate axis from `listed`, which is browser
+visibility. (Nothing to do with the `realtime:quick_play` alias above, which
+queues the matchmaker.) The other refusals a caller can see are
+`match_capacity_reached` (the node-wide match cap), `wrong_mode_type` (a world
+mode), and `join_rate_limited` (the same bucket as `match.join` and
+`world.join`).
+
+Requires an asobi server v0.85.0 or later.
+
+The older route is to browse by id: list with `list_matches`, join with
+`join_match`. A running match accepts joiners while it is below `max_players`.
+That one races, because two clients reading the same empty listing each create a
+match, so prefer `find_or_create_match` unless the player is picking a specific
+match out of a lobby UI.
 
 ```lua
 client.realtime:list_matches({mode = "arena", has_capacity = true}, function(payload, err)
@@ -542,7 +572,7 @@ Branch on `err.code`; `message` is for humans and may be reworded at any time.
 - **Players** - Profiles, updates
 - **Worlds** - List, create, find-or-create, join, leave, input, entity sync, prediction ack
 - **Matchmaker** - Queue, status, cancel
-- **Matches** - List, join, details
+- **Matches** - List, join, find-or-create, details
 - **Leaderboards** - Top scores, around player, submit
 - **Economy** - Wallets, store, purchases
 - **Inventory** - Items, consume

@@ -203,6 +203,35 @@ function M:join_match(match_id, opts, callback)
 	self:_send_with_callback("match.join", payload, callback)
 end
 
+-- Get into a live match of `mode`, spawning one if there is none: the match
+-- twin of find_or_create_world. The matchmaker only ever groups co-queued
+-- tickets, so the alternative is list_matches then join_match, which races -
+-- two clients reading the same empty listing each create a match. This is
+-- resolved server-side and serialized, so simultaneous callers converge on one
+-- match. Prefer it over browse-then-join.
+--
+-- `mode` is the only payload field; every other match parameter comes from the
+-- mode's server-side config. `opts` is optional and may be `{ctx = {...}}`,
+-- the same join context join_match takes, passed through untouched.
+--
+-- The reply is match.joined, so `callback` gets exactly what join_match's does,
+-- or nil plus a reason: quick_play_disabled (the mode's `quick_play` flag,
+-- which defaults to false for match modes, is not set), wrong_mode_type (a
+-- world mode), match_capacity_reached (the node-wide cap), or
+-- join_rate_limited. Passing the callback as the second argument works too.
+--
+-- Requires an asobi server >= v0.85.0.
+function M:find_or_create_match(mode, opts, callback)
+	if type(opts) == "function" then
+		opts, callback = nil, opts
+	end
+	local payload = {mode = mode}
+	if type(opts) == "table" and opts.ctx ~= nil then
+		payload.ctx = opts.ctx
+	end
+	self:_send_with_callback("match.find_or_create", payload, callback)
+end
+
 function M:send_match_input(input)
 	self:_send_fire_and_forget("match.input", input)
 end
