@@ -167,19 +167,18 @@ client.realtime:find_or_create_match("arena", function(info, err)
 end)
 ```
 
-`mode` is the only parameter; every other match parameter comes from that mode's
-server-side config. It takes the same optional `{ctx = ...}` table `join_match`
-does, and the reply is `match.joined` - the same payload `join_match` resolves
-with.
+`mode` is the only match parameter; the rest come from that mode's server-side
+config. It takes the same optional `{ctx = ...}` table `join_match` does, and
+the reply is `match.joined` - the same payload `join_match` resolves with.
 
 Eligibility is the mode's `quick_play` flag, which defaults to **false** for
 match modes; a mode that has not opted in is refused with
 `quick_play_disabled`. That is a separate axis from `listed`, which is browser
 visibility. (Nothing to do with the `realtime:quick_play` alias above, which
-queues the matchmaker.) The other refusals a caller can see are
-`match_capacity_reached` (the node-wide match cap), `wrong_mode_type` (a world
-mode), and `join_rate_limited` (the same bucket as `match.join` and
-`world.join`).
+queues the matchmaker.) Refusals include `not_found` (no mode of that name is
+configured, so a typo lands here), `wrong_mode_type` (a world mode),
+`match_capacity_reached` (the node-wide match cap), and `join_rate_limited`
+(the same bucket as `match.join` and `world.join`).
 
 Requires an asobi server v0.86.0 or later.
 

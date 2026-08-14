@@ -210,15 +210,17 @@ end
 -- resolved server-side and serialized, so simultaneous callers converge on one
 -- match. Prefer it over browse-then-join.
 --
--- `mode` is the only payload field; every other match parameter comes from the
--- mode's server-side config. `opts` is optional and may be `{ctx = {...}}`,
--- the same join context join_match takes, passed through untouched.
+-- `mode` is the only match parameter; the rest come from the mode's
+-- server-side config. `opts` is optional and may be `{ctx = {...}}`, the same
+-- join context join_match takes, passed through untouched.
 --
 -- The reply is match.joined, so `callback` gets exactly what join_match's does,
--- or nil plus a reason: quick_play_disabled (the mode's `quick_play` flag,
--- which defaults to false for match modes, is not set), wrong_mode_type (a
--- world mode), match_capacity_reached (the node-wide cap), or
--- join_rate_limited. Passing the callback as the second argument works too.
+-- or nil plus a reason. Refusals include not_found (no mode of that name is
+-- configured, so a typo lands here), quick_play_disabled (the mode's
+-- `quick_play` flag, which defaults to false for match modes, is not set),
+-- wrong_mode_type (a world mode), match_capacity_reached (the node-wide cap)
+-- and join_rate_limited. Passing the callback as the second argument works
+-- too.
 --
 -- Requires an asobi server >= v0.86.0.
 function M:find_or_create_match(mode, opts, callback)
