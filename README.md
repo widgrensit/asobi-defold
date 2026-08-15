@@ -301,12 +301,15 @@ For an actual "delete my data" request, `clear` is not enough — the account
 and everything on it stay on the server. `erase_self` deletes them:
 
 ```lua
+local device = require("asobi.device")
+
 -- Guest or provider-only account: no password to confirm with.
 client.players.erase_self(client, nil, function(data, err)
     if err then
         print("erase failed: " .. err.code .. " - " .. err.error)
         return
     end
+    device.clear()  -- without this the next launch is a brand-new guest
     print("account erased")
 end)
 
@@ -318,17 +321,34 @@ Irreversible. A wrong password comes back as `err.code ==
 "player.confirmation_failed"` (403) and changes nothing.
 
 On success the local session is cleared, because the server deleted the token
-pair in the same transaction. Anything afterwards on that session is a `401` —
-for a retried erase, read that as "it already worked". The device keypair is
-*not* cleared, so call `device.clear()` too if the next launch should not sign
-straight back in as a new guest.
+pair in the same transaction. Anything afterwards on that session is a `401` -
+for a retried erase, read that as "it already worked".
+
+**`erase_self` does not clear the device keypair.** The server deletes the guest
+identity along with the player, so the same `{device_id, device_secret}` counts
+as a first presentation again and the next `guest_device` mints a *brand-new*
+player. The symptom is a guest reappearing for the same device after an erase
+that succeeded - a different `player_id`, not the one you deleted. Call
+`device.clear()` in the success branch, as above, if the next launch should not
+sign straight back in. Nothing reaps abandoned guests unless the server sets
+`guest_reap_after`, so without it they accumulate.
+
+**Erase from something that outlives the request.** `http.request` is async and
+its callback belongs to the script instance that made the call. Delete that game
+object, unload its collection proxy, or quit while the response is in flight and
+Defold drops the callback and logs `Failed to return http-response. Requester
+deleted?`; quit early enough and the request never lands at all, leaving the
+account alive. Issue the call from a persistent manager object and defer the
+screen teardown to the success branch. This holds for every async call in this
+SDK, not just erase - it is only destructive here.
 
 Needs a server carrying `POST /api/v1/players/me/erase`; older ones answer 404.
 
 **If you mint a throwaway pair per launch** (`device.generate()` — a testing
 trick, see the multiple-players guide) every run leaves an account behind, and
-on asobi Cloud nothing reaps them. Either call `erase_self` on shutdown, or use
-`guest_device` so relaunching resumes one player instead of creating another.
+on asobi Cloud nothing reaps them. Use `guest_device` so relaunching resumes one
+player instead of creating another. Erasing them on quit does not work: the
+request cannot outlive the shutdown.
 
 Later, convert the guest into a full account (keeps the same `player_id`).
 The call is authenticated with the guest's current access token, so run it
