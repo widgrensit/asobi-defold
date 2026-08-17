@@ -221,6 +221,165 @@ do
 	end
 end
 
+
+-- ------------------------------------------------------------------
+-- Interest-ring zone safety. A player is subscribed to several zones at once,
+-- each an independent server process, so frames from two of them have no order
+-- relative to each other. These are the cases that used to corrupt the table.
+-- ------------------------------------------------------------------
+
+local function jadd(id, fields)
+	local d = {op = "a", id = id}
+	if fields then for k, v in pairs(fields) do d[k] = v end end
+	return d
+end
+local function jremove(id) return {op = "r", id = id} end
+
+-- Captures frames the SDK sends, so the resync request is observable.
+local function capturing_rt()
+	local rt = new_rt()
+	rt.connection = {}
+	rt.sent = {}
+	local encode = json.encode
+	json.encode = function(frame) rt.sent[#rt.sent + 1] = frame; return "" end
+	rt._restore_json = function() json.encode = encode end
+	return rt
+end
+
+-- The crossing, in the order that used to lose the entity: the new zone claims
+-- it, then the old zone's removal arrives late.
+do
+	local rt = new_rt()
+	rt:_dispatch_tick({zone = {1, 1}, frame_seq = 1, tick = 1, updates = {jadd("p1", {x = 5})}})
+	rt:_dispatch_tick({zone = {0, 1}, frame_seq = 1, tick = 1, updates = {jremove("p1")}})
+	check(rt.entities.p1 ~= nil, "a late remove from the zone left must not delete a crossed entity")
+	check(rt.entity_zone.p1 == "1:1", "the entity stays owned by the zone that claimed it")
+end
+
+-- The same crossing in the other order, which always worked, to prove the fix
+-- did not simply invert the bug.
+do
+	local rt = new_rt()
+	rt:_dispatch_tick({zone = {0, 1}, frame_seq = 1, tick = 1, updates = {jremove("p1")}})
+	rt:_dispatch_tick({zone = {1, 1}, frame_seq = 1, tick = 1, updates = {jadd("p1", {x = 5})}})
+	check(rt.entities.p1 ~= nil, "remove-then-add converges on the entity being present")
+	check(rt.entity_zone.p1 == "1:1", "and owned by the zone that added it")
+end
+
+-- A stale update from the zone that no longer owns the entity is ignored too,
+-- or a crossing player would snap back to their old zone's last position.
+do
+	local rt = new_rt()
+	rt:_dispatch_tick({zone = {1, 1}, frame_seq = 1, tick = 1, updates = {jadd("p1", {x = 100})}})
+	rt:_dispatch_tick({zone = {0, 1}, frame_seq = 1, tick = 1, updates = {{op = "u", id = "p1", x = 7}}})
+	check(rt.entities.p1.x == 100, "a stale update from the previous zone is ignored")
+end
+
+-- A remove from the owning zone still works. The guard must not make entities
+-- immortal.
+do
+	local rt = new_rt()
+	rt:_dispatch_tick({zone = {1, 1}, frame_seq = 1, tick = 1, updates = {jadd("p1", {x = 5})}})
+	rt:_dispatch_tick({zone = {1, 1}, frame_seq = 2, tick = 2, updates = {jremove("p1")}})
+	check(rt.entities.p1 == nil, "the owning zone can still remove its own entity")
+	check(rt.entity_zone.p1 == nil, "and ownership is released with it")
+end
+
+-- ------------------------------------------------------------------
+-- Gap detection and repair.
+-- ------------------------------------------------------------------
+
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({zone = {2, 0}, frame_seq = 1, tick = 1, updates = {jadd("e1")}})
+	rt:_dispatch_tick({zone = {2, 0}, frame_seq = 4, tick = 4, updates = {jadd("e2")}})
+	check(#rt.sent == 1, "a sequence gap asks for exactly one resync")
+	check(rt.sent[1] and rt.sent[1].type == "world.resync", "the request is world.resync")
+	check(rt.sent[1].payload.zone[1] == 2 and rt.sent[1].payload.zone[2] == 0,
+		"and it names the zone that gapped, not the whole ring")
+	check(rt.entities.e2 ~= nil, "the gapping frame is still applied - it is the newest news")
+	-- A client that keeps gapping asks once per incident, not once per frame.
+	rt:_dispatch_tick({zone = {2, 0}, frame_seq = 9, tick = 9, updates = {jadd("e3")}})
+	check(#rt.sent == 1, "a second gap while a resync is outstanding does not re-ask")
+	rt._restore_json()
+end
+
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({zone = {2, 0}, frame_seq = 5, tick = 5, updates = {jadd("e1")}})
+	rt:_dispatch_tick({zone = {2, 0}, frame_seq = 5, tick = 5, updates = {{op = "u", id = "e1", x = 9}}})
+	check(rt.entities.e1.x == nil, "a repeated frame_seq is dropped rather than re-applied")
+	check(#rt.sent == 0, "and a duplicate is not mistaken for a gap")
+	rt._restore_json()
+end
+
+-- A gap in one zone says nothing about another. Sequences are per zone.
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({zone = {0, 0}, frame_seq = 1, tick = 1, updates = {jadd("a1")}})
+	rt:_dispatch_tick({zone = {1, 0}, frame_seq = 1, tick = 1, updates = {jadd("b1")}})
+	rt:_dispatch_tick({zone = {1, 0}, frame_seq = 2, tick = 2, updates = {jadd("b2")}})
+	check(#rt.sent == 0, "contiguous sequences in two zones are not a gap in either")
+	rt._restore_json()
+end
+
+-- ------------------------------------------------------------------
+-- Keyframe adoption.
+-- ------------------------------------------------------------------
+
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({zone = {3, 3}, frame_seq = 7, tick = 7, updates = {jadd("keep"), jadd("drop")}})
+	rt:_dispatch_tick({zone = {9, 9}, frame_seq = 1, tick = 1, updates = {jadd("other")}})
+	-- The keyframe is this zone's whole state: `drop` is gone, `keep` remains,
+	-- and another zone's entity is untouched.
+	rt:_dispatch_tick({zone = {3, 3}, frame_seq = 2, kf = true, tick = 0, updates = {jadd("keep")}})
+	check(rt.entities.keep ~= nil, "a keyframe keeps what it lists")
+	check(rt.entities.drop == nil, "a keyframe removes what it omits, for its own zone")
+	check(rt.entities.other ~= nil, "and leaves another zone's entities alone")
+	check(rt.zone_seq["3:3"] == 2, "a keyframe resets the sequence even when it moves backwards")
+	rt._restore_json()
+end
+
+-- The keyframe must be adopted even though its frame_seq is lower than what the
+-- client has already seen, because a zone restart resets the counter while the
+-- zone's identity is unchanged. A monotonic guard here freezes the client on
+-- pre-crash state forever.
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({zone = {4, 4}, frame_seq = 500, tick = 500, updates = {jadd("stale")}})
+	rt:_dispatch_tick({zone = {4, 4}, frame_seq = 1, kf = true, tick = 0, updates = {jadd("fresh")}})
+	check(rt.entities.fresh ~= nil, "a post-restart keyframe is adopted despite a lower frame_seq")
+	check(rt.entities.stale == nil, "and clears the pre-restart state it replaces")
+	rt._restore_json()
+end
+
+-- A keyframe clears the outstanding-resync flag, so the next real gap can ask.
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({zone = {5, 5}, frame_seq = 1, tick = 1, updates = {jadd("e1")}})
+	rt:_dispatch_tick({zone = {5, 5}, frame_seq = 5, tick = 5, updates = {jadd("e2")}})
+	check(#rt.sent == 1, "first gap asks")
+	rt:_dispatch_tick({zone = {5, 5}, frame_seq = 5, kf = true, tick = 0, updates = {jadd("e1")}})
+	rt:_dispatch_tick({zone = {5, 5}, frame_seq = 20, tick = 20, updates = {jadd("e9")}})
+	check(#rt.sent == 2, "after the keyframe lands, a later gap asks again")
+	rt._restore_json()
+end
+
+-- ------------------------------------------------------------------
+-- match.state carries no zone, and must behave exactly as it did before.
+-- ------------------------------------------------------------------
+
+do
+	local rt = capturing_rt()
+	rt:_dispatch_tick({tick = 1, updates = {jadd("m1", {x = 1})}})
+	rt:_dispatch_tick({tick = 2, updates = {{op = "u", id = "m1", x = 2}}})
+	rt:_dispatch_tick({tick = 3, updates = {jremove("m1")}})
+	check(rt.entities.m1 == nil, "match mode still adds, updates and removes in one namespace")
+	check(#rt.sent == 0, "and never asks for a resync, having no zone to name")
+	rt._restore_json()
+end
+
 -- ------------------------------------------------------------------
 if failures == 0 then
 	print("OK: all entity-sync tests passed")
