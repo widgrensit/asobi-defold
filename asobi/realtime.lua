@@ -1,3 +1,5 @@
+local wire = require("asobi.wire")
+
 local M = {}
 M.__index = M
 
@@ -120,6 +122,15 @@ function M.new(client)
 		-- keeps gapping asks once per incident instead of once per frame.
 		resync_pending = {},
 		local_player_id = nil,
+		-- Set before connect() to ask for the binary world.tick encoding. The
+		-- decoder maps its 2-byte entity slots back to entity ids, so every
+		-- callback already written keeps working unchanged.
+		request_binary_wire = false,
+		-- The wire the server actually GRANTED, "json" or "binary". A server with
+		-- the binary wire switched off answers "json", so read this rather than
+		-- assume the request was honoured.
+		wire = "json",
+		wire_state = wire.new(),
 	}, M)
 end
 
@@ -159,7 +170,7 @@ function M:connect()
 	local params = {}
 	self.connection = websocket.connect(self.client.ws_url, params, function(_self, conn, data)
 		if data.event == websocket.EVENT_CONNECTED then
-			self:_send("session.connect", {token = self.client.access_token})
+			self:_send_session_connect()
 		elseif data.event == websocket.EVENT_DISCONNECTED then
 			self.connection = nil
 			local reason = data.message or "closed"
@@ -181,6 +192,10 @@ function M:disconnect()
 		websocket.disconnect(self.connection)
 		self.connection = nil
 	end
+	-- Slot bindings are established by the adds THIS connection received, so
+	-- carrying them across a reconnect would attach stale ids to slots the server
+	-- has since handed to different entities.
+	wire.reset(self.wire_state)
 end
 
 -- Re-authenticate a live socket with the current access_token. Called
@@ -188,7 +203,13 @@ end
 -- a burned token. No-op if not connected.
 function M:reauth()
 	if not self.connection then return end
-	self:_send("session.connect", {token = self.client.access_token})
+	self:_send_session_connect()
+end
+
+function M:_send_session_connect()
+	local payload = {token = self.client.access_token}
+	if self.request_binary_wire then payload.wire = "binary" end
+	self:_send("session.connect", payload)
 end
 
 local AUTH_CLOSE_REASONS = {
@@ -648,88 +669,28 @@ function M:_request_resync(zkey, zone)
 	self:_send_fire_and_forget("world.resync", {zone = zone})
 end
 
--- The backend also speaks a binary WS sub-protocol (asobi_ws_binary) on
--- the same socket. Defold's websocket callback delivers every frame as a
--- Lua string with no reliable text/binary discriminator, so we sniff the
--- first byte: JSON text frames always start with '{' (0x7B), whereas the
--- binary frame's leading Type byte is one of 0x01/0x02/0x03. This is
--- unambiguous for the current protocol; if the binary protocol ever adds
--- a Type >= 0x7B this heuristic would need a real discriminator.
-local BINARY_TYPES = {[0x01] = true, [0x02] = true, [0x03] = true}
-
-local function is_binary_frame(raw)
-	if type(raw) ~= "string" or #raw < 1 then return false end
-	return BINARY_TYPES[string.byte(raw, 1)] == true
-end
-
--- Reads `n` bytes big-endian as an unsigned integer starting at `pos`.
--- Returns the value and the position just past the field.
-local function read_uint(raw, pos, n)
-	local value = 0
-	for i = 0, n - 1 do
-		value = value * 256 + string.byte(raw, pos + i)
-	end
-	return value, pos + n
-end
-
-local function read_int32(raw, pos)
-	local value, next_pos = read_uint(raw, pos, 4)
-	if value >= 0x80000000 then value = value - 0x100000000 end
-	return value, next_pos
-end
-
-local BINARY_OPS = {[0] = "add", [1] = "update", [2] = "remove"}
-
--- Parses one binary frame `<<Type:8, Len:32/big, Payload:Len>>` and routes
--- it through the same paths as the equivalent JSON messages:
---   0x01 terrain_chunk -> world_terrain (same as world.terrain)
---   0x02 entity_delta  -> _dispatch_tick (same as world.tick)
---   0x03 match_state   -> reserved (ignored)
+-- The binary `world.tick` wire (asobi ADR 0013). Decoded into the same payload
+-- table the JSON path produces, so it goes through the same zone reconciliation,
+-- the same gap detection and the same callbacks - a game never learns which wire
+-- carried a frame.
+--
+-- This replaces the old asobi_ws_binary sub-protocol, which the server no longer
+-- speaks. Its frame sniff tested for a leading byte in {0x01, 0x02, 0x03}, and the
+-- new wire's frame-kind byte is 1 or 2, so leaving it in place would have parsed
+-- the new frames as the old protocol and produced silent garbage.
 function M:_handle_binary(raw)
-	if #raw < 5 then return end
-	local btype = string.byte(raw, 1)
-	local payload_len, pos = read_uint(raw, 2, 4)
-	local payload_end = pos + payload_len - 1
-	if payload_end > #raw then return end
-	if btype == 0x01 then
-		if payload_len < 8 then return end
-		local cx, cy
-		cx, pos = read_int32(raw, pos)
-		cy, pos = read_int32(raw, pos)
-		local data = string.sub(raw, pos, payload_end)
-		fire(self, "world_terrain", {coords = {cx, cy}, data = data, binary = true})
-	elseif btype == 0x02 then
-		if payload_len < 12 then return end
-		local tick, count
-		tick, pos = read_uint(raw, pos, 8)
-		count, pos = read_uint(raw, pos, 4)
-		local updates = {}
-		for _ = 1, count do
-			if pos > payload_end then break end
-			local op_byte, id_len
-			op_byte, pos = read_uint(raw, pos, 1)
-			id_len, pos = read_uint(raw, pos, 2)
-			local id = string.sub(raw, pos, pos + id_len - 1)
-			pos = pos + id_len
-			local fields_len
-			fields_len, pos = read_uint(raw, pos, 4)
-			local fields = {}
-			if fields_len > 0 then
-				fields = json.decode(string.sub(raw, pos, pos + fields_len - 1)) or {}
-			end
-			pos = pos + fields_len
-			updates[#updates + 1] = {
-				op = BINARY_OPS[op_byte],
-				entity_id = id,
-				fields = fields,
-			}
-		end
-		self:_dispatch_tick({tick = tick, updates = updates})
+	local payload = wire.decode(self.wire_state, raw)
+	if not payload then
+		-- Off the network and unreadable. Dropping one frame costs a gap that
+		-- frame_seq detects and a resync repairs; guessing at it would corrupt the
+		-- entity table with no way to notice.
+		return
 	end
+	self:_dispatch_tick(payload)
 end
 
 function M:_handle_message(raw)
-	if is_binary_frame(raw) then
+	if wire.is_binary_frame(raw) then
 		self:_handle_binary(raw)
 		return
 	end
@@ -768,8 +729,9 @@ function M:_handle_message(raw)
 		self:_dispatch_tick(payload)
 	end
 
-	if msg_type == "session.connected" and payload.player_id then
-		self.local_player_id = payload.player_id
+	if msg_type == "session.connected" then
+		if payload.player_id then self.local_player_id = payload.player_id end
+		self.wire = payload.wire or "json"
 	end
 
 	-- Reset the entity registry on world transitions so stale ghosts

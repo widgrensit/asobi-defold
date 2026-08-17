@@ -607,3 +607,32 @@ See the [WebSocket protocol guide](https://github.com/widgrensit/asobi/blob/main
 ## License
 
 Apache-2.0
+
+## Binary `world.tick`
+
+Ask for the binary encoding and `world.tick` arrives as a WebSocket binary frame
+in roughly a fifth of the bytes. The decode saving is the one that matters here:
+stock Lua has no native JSON, so this SDK ships a **pure-Lua parser**, and a
+40-entity delta costs it around 440 us per frame - at 20 Hz, close to 1% of a
+mobile CPU doing nothing but reading text. The binary decoder was measured
+**33x faster** on the same frame.
+
+```lua
+client.realtime.request_binary_wire = true
+client.realtime:connect()
+```
+
+**Nothing else changes.** The decoder maps the wire's compact 2-byte entity slots
+back to entity ids before anything reaches the entity registry, so
+`entity_added` / `entity_updated` / `entity_removed` and `tick` all behave exactly
+as before, and every callback you have already written keeps working. Only
+`world.tick` is affected; everything else stays JSON text on both wires.
+
+Requires the server to have `binary_wire` switched on. If it does not, you
+silently stay on text - `client.realtime.wire` reads `"json"` or `"binary"` once
+`connected` has fired, so read it rather than assume. The same fallback happens
+per frame for anything the server cannot encode as binary, such as an entity
+field holding a table.
+
+Arithmetic only, no `string.unpack` and no bitwise operators, so it runs on the
+Lua 5.1 engine Defold uses for HTML5 as well as on LuaJIT.
