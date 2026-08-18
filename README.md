@@ -636,3 +636,28 @@ field holding a table.
 
 Arithmetic only, no `string.unpack` and no bitwise operators, so it runs on the
 Lua 5.1 engine Defold uses for HTML5 as well as on LuaJIT.
+
+## The datagram plane (optional)
+
+Positions can travel over UDP instead of the WebSocket, so one lost packet costs
+one frame of staleness rather than stalling everything behind a retransmit.
+
+```lua
+client.realtime.request_datagram = true
+client.realtime:connect()
+```
+
+**Nothing else changes.** Entity callbacks fire exactly as before; the SDK merges
+the two carriers for you, and `world.tick` keeps carrying entity creation,
+removal and every non-transform field. Only absolute transform state travels on
+the plane, and only what your server declared in its `dgram_pose` manifest.
+
+**The WebSocket carries everything in every state.** If the server has no
+gateway, if a firewall drops UDP, or if the path goes quiet for two seconds, the
+SDK falls back to taking transforms from `world.tick` and keeps trying in the
+background. There is no state in which your game stops working, which is why this
+is safe to switch on and why a web export - where raw UDP does not exist - simply
+never opens it.
+
+What it needs from the server: `binary_wire` on, a `dgram_pose` manifest, and a
+gateway reachable at the endpoint the mint hands back.
