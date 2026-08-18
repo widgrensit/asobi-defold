@@ -1,3 +1,6 @@
+local wire = require("asobi.wire")
+local datagram = require("asobi.datagram")
+
 local M = {}
 M.__index = M
 
@@ -120,6 +123,26 @@ function M.new(client)
 		-- keeps gapping asks once per incident instead of once per frame.
 		resync_pending = {},
 		local_player_id = nil,
+		-- Set before connect() to ask for the binary world.tick encoding. The
+		-- decoder maps its 2-byte entity slots back to entity ids, so every
+		-- callback already written keeps working unchanged.
+		request_binary_wire = false,
+		-- The wire the server actually GRANTED, "json" or "binary". A server with
+		-- the binary wire switched off answers "json", so read this rather than
+		-- assume the request was honoured.
+		wire = "json",
+		wire_state = wire.new(),
+		-- Set before connect() to also open the datagram plane. Positions then
+		-- arrive over UDP, which cannot head-of-line-block behind a retransmit.
+		-- Everything else is unchanged, and the WebSocket keeps carrying the
+		-- whole game in every state - including on HTML5, where there is no raw
+		-- UDP at all and this simply never opens.
+		request_datagram = false,
+		dgram = nil,
+		dgram_socket = nil,
+		-- Per entity, the last pose tick applied: the two-carrier merge rule in
+		-- one number (ADR 0012, decision 12).
+		pose_tick = {},
 	}, M)
 end
 
@@ -159,7 +182,7 @@ function M:connect()
 	local params = {}
 	self.connection = websocket.connect(self.client.ws_url, params, function(_self, conn, data)
 		if data.event == websocket.EVENT_CONNECTED then
-			self:_send("session.connect", {token = self.client.access_token})
+			self:_send_session_connect()
 		elseif data.event == websocket.EVENT_DISCONNECTED then
 			self.connection = nil
 			local reason = data.message or "closed"
@@ -176,11 +199,143 @@ function M:connect()
 	end)
 end
 
+-- --- The datagram plane ---
+--
+-- Optional in every state. Everything below can fail, be blocked by a firewall,
+-- or never be configured on the server, and the game keeps working on the
+-- WebSocket exactly as it did - which is why this is safe to switch on, and why
+-- an HTML5 build simply never gets here.
+
+function M:_datagram_open()
+	local ok_socket, socket = pcall(require, "socket")
+	if not ok_socket then return end
+	if not (crypto and crypto.hash_sha256) then return end
+
+	local udp = socket.udp()
+	if not udp then return end
+	udp:settimeout(0)
+
+	self.dgram_socket = udp
+	self.dgram = datagram.new({
+		send = function(bytes)
+			-- No delivery to fail on a connectionless socket, and the next
+			-- datagram supersedes this one, so a failure is dropped rather than
+			-- retried.
+			pcall(function() udp:send(bytes) end)
+		end,
+		now = function() return socket.gettime() end,
+		sha256 = function(bytes) return crypto.hash_sha256(bytes) end,
+	})
+	datagram.begin_mint(self.dgram)
+
+	self:rpc("asobi.datagram.open", {}, function(result, err)
+		if err or not result then
+			-- datagram_unavailable is a normal answer rather than a failure:
+			-- this server has no plane today and the WebSocket carries all.
+			self:_datagram_stop()
+			return
+		end
+		local host, port = self:_datagram_endpoint(result.endpoint)
+		if not host then
+			self:_datagram_stop()
+			return
+		end
+		udp:setpeername(host, port)
+		datagram.on_mint(self.dgram, {
+			conn_id = result.conn_id,
+			kup = crypto.decode_base64(result.kup),
+			epoch = result.epoch,
+			fields = result.fields or {},
+		})
+	end)
+end
+
+function M:_datagram_stop()
+	if self.dgram then datagram.stop(self.dgram) end
+	if self.dgram_socket then
+		pcall(function() self.dgram_socket:close() end)
+		self.dgram_socket = nil
+	end
+	self.dgram = nil
+	self.pose_tick = {}
+end
+
+-- Call once per frame from your own update(). Defold's websocket is callback
+-- driven and needs no pump; a UDP socket does.
+function M:update()
+	local dg = self.dgram
+	if not dg then return end
+	local socket = require("socket")
+	local now = socket.gettime()
+
+	-- A bounded drain. An uncapped loop would let a flood hold the frame, which
+	-- on a client is a visible stall rather than an abstraction.
+	for _ = 1, 64 do
+		local raw = self.dgram_socket and self.dgram_socket:receive()
+		if not raw then break end
+		local pose = datagram.on_datagram(dg, raw, now)
+		if pose then self:_apply_pose(pose) end
+	end
+	datagram.update(dg, now)
+end
+
+-- A pose can never create or remove an entity - it carries a slot and a bitmask
+-- and has nowhere to say otherwise - so a slot with no binding is skipped and
+-- the world.tick that introduces it is what fixes that.
+function M:_apply_pose(pose)
+	local zkey = tostring(pose.zone[1]) .. ":" .. tostring(pose.zone[2])
+	local table_for_zone = self.wire_state.slots[zkey]
+	if not table_for_zone then return end
+	local fields = self.dgram.fields
+	if #fields == 0 then return end
+
+	for _, record in ipairs(pose.records) do
+		local id = table_for_zone[record.slot]
+		if id and self.entities[id] and self.entity_zone[id] == zkey then
+			local last = self.pose_tick[id]
+			if not last or pose.tick >= last then
+				self.pose_tick[id] = pose.tick
+				local state = self.entities[id]
+				local changed = {}
+				for i, field in ipairs(fields) do
+					local v = record.values[i]
+					if v ~= nil then
+						-- The inverse of the server's quantisation: two
+						-- multiplies, which is why the wire carries int16 and a
+						-- scale rather than float32.
+						local scaled = v / field.scale
+						local name = field.name
+						if state[name] ~= scaled then
+							state[name] = scaled
+							changed[#changed + 1] = name
+						end
+					end
+				end
+				if #changed > 0 then fire(self, "entity_updated", id, state, changed) end
+			end
+		end
+	end
+end
+
+-- "host:port" as the mint response gives it, which is what makes the plane
+-- independent of DNS and of SNI and why a non-standard port costs nothing.
+function M:_datagram_endpoint(endpoint)
+	if type(endpoint) ~= "string" then return nil end
+	local host, port = endpoint:match("^(.+):(%d+)$")
+	if not host then return nil end
+	return host, tonumber(port)
+end
+
 function M:disconnect()
+	self:_datagram_stop()
 	if self.connection then
 		websocket.disconnect(self.connection)
 		self.connection = nil
 	end
+	-- Slot bindings are established by the adds THIS connection received, so
+	-- carrying them across a reconnect would attach stale ids to slots the server
+	-- has since handed to different entities.
+	wire.reset(self.wire_state)
 end
 
 -- Re-authenticate a live socket with the current access_token. Called
@@ -188,7 +343,13 @@ end
 -- a burned token. No-op if not connected.
 function M:reauth()
 	if not self.connection then return end
-	self:_send("session.connect", {token = self.client.access_token})
+	self:_send_session_connect()
+end
+
+function M:_send_session_connect()
+	local payload = {token = self.client.access_token}
+	if self.request_binary_wire then payload.wire = "binary" end
+	self:_send("session.connect", payload)
 end
 
 local AUTH_CLOSE_REASONS = {
@@ -648,88 +809,28 @@ function M:_request_resync(zkey, zone)
 	self:_send_fire_and_forget("world.resync", {zone = zone})
 end
 
--- The backend also speaks a binary WS sub-protocol (asobi_ws_binary) on
--- the same socket. Defold's websocket callback delivers every frame as a
--- Lua string with no reliable text/binary discriminator, so we sniff the
--- first byte: JSON text frames always start with '{' (0x7B), whereas the
--- binary frame's leading Type byte is one of 0x01/0x02/0x03. This is
--- unambiguous for the current protocol; if the binary protocol ever adds
--- a Type >= 0x7B this heuristic would need a real discriminator.
-local BINARY_TYPES = {[0x01] = true, [0x02] = true, [0x03] = true}
-
-local function is_binary_frame(raw)
-	if type(raw) ~= "string" or #raw < 1 then return false end
-	return BINARY_TYPES[string.byte(raw, 1)] == true
-end
-
--- Reads `n` bytes big-endian as an unsigned integer starting at `pos`.
--- Returns the value and the position just past the field.
-local function read_uint(raw, pos, n)
-	local value = 0
-	for i = 0, n - 1 do
-		value = value * 256 + string.byte(raw, pos + i)
-	end
-	return value, pos + n
-end
-
-local function read_int32(raw, pos)
-	local value, next_pos = read_uint(raw, pos, 4)
-	if value >= 0x80000000 then value = value - 0x100000000 end
-	return value, next_pos
-end
-
-local BINARY_OPS = {[0] = "add", [1] = "update", [2] = "remove"}
-
--- Parses one binary frame `<<Type:8, Len:32/big, Payload:Len>>` and routes
--- it through the same paths as the equivalent JSON messages:
---   0x01 terrain_chunk -> world_terrain (same as world.terrain)
---   0x02 entity_delta  -> _dispatch_tick (same as world.tick)
---   0x03 match_state   -> reserved (ignored)
+-- The binary `world.tick` wire (asobi ADR 0013). Decoded into the same payload
+-- table the JSON path produces, so it goes through the same zone reconciliation,
+-- the same gap detection and the same callbacks - a game never learns which wire
+-- carried a frame.
+--
+-- This replaces the old asobi_ws_binary sub-protocol, which the server no longer
+-- speaks. Its frame sniff tested for a leading byte in {0x01, 0x02, 0x03}, and the
+-- new wire's frame-kind byte is 1 or 2, so leaving it in place would have parsed
+-- the new frames as the old protocol and produced silent garbage.
 function M:_handle_binary(raw)
-	if #raw < 5 then return end
-	local btype = string.byte(raw, 1)
-	local payload_len, pos = read_uint(raw, 2, 4)
-	local payload_end = pos + payload_len - 1
-	if payload_end > #raw then return end
-	if btype == 0x01 then
-		if payload_len < 8 then return end
-		local cx, cy
-		cx, pos = read_int32(raw, pos)
-		cy, pos = read_int32(raw, pos)
-		local data = string.sub(raw, pos, payload_end)
-		fire(self, "world_terrain", {coords = {cx, cy}, data = data, binary = true})
-	elseif btype == 0x02 then
-		if payload_len < 12 then return end
-		local tick, count
-		tick, pos = read_uint(raw, pos, 8)
-		count, pos = read_uint(raw, pos, 4)
-		local updates = {}
-		for _ = 1, count do
-			if pos > payload_end then break end
-			local op_byte, id_len
-			op_byte, pos = read_uint(raw, pos, 1)
-			id_len, pos = read_uint(raw, pos, 2)
-			local id = string.sub(raw, pos, pos + id_len - 1)
-			pos = pos + id_len
-			local fields_len
-			fields_len, pos = read_uint(raw, pos, 4)
-			local fields = {}
-			if fields_len > 0 then
-				fields = json.decode(string.sub(raw, pos, pos + fields_len - 1)) or {}
-			end
-			pos = pos + fields_len
-			updates[#updates + 1] = {
-				op = BINARY_OPS[op_byte],
-				entity_id = id,
-				fields = fields,
-			}
-		end
-		self:_dispatch_tick({tick = tick, updates = updates})
+	local payload = wire.decode(self.wire_state, raw)
+	if not payload then
+		-- Off the network and unreadable. Dropping one frame costs a gap that
+		-- frame_seq detects and a resync repairs; guessing at it would corrupt the
+		-- entity table with no way to notice.
+		return
 	end
+	self:_dispatch_tick(payload)
 end
 
 function M:_handle_message(raw)
-	if is_binary_frame(raw) then
+	if wire.is_binary_frame(raw) then
 		self:_handle_binary(raw)
 		return
 	end
@@ -768,8 +869,13 @@ function M:_handle_message(raw)
 		self:_dispatch_tick(payload)
 	end
 
-	if msg_type == "session.connected" and payload.player_id then
-		self.local_player_id = payload.player_id
+	if msg_type == "session.connected" and self.request_datagram then
+		self:_datagram_open()
+	end
+
+	if msg_type == "session.connected" then
+		if payload.player_id then self.local_player_id = payload.player_id end
+		self.wire = payload.wire or "json"
 	end
 
 	-- Reset the entity registry on world transitions so stale ghosts

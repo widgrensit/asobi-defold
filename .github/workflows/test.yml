@@ -32,6 +32,9 @@ jobs:
       - name: Run binary WS protocol unit tests
         run: lua5.4 tests/test_binary.lua
 
+      - name: Datagram test (client state machine + codec)
+        run: lua5.4 tests/test_datagram.lua
+
       - name: Run auth-flow unit tests
         run: lua5.4 tests/test_auth.lua
 
